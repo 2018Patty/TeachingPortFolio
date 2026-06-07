@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(npm install *)",
+      "Bash(xargs ls -la)",
+      "Bash(node -e \"require\\('xlsx'\\); console.log\\('ok'\\)\")",
+      "Bash(node -e \"const icons = require\\('./node_modules/lucide-react'\\); console.log\\('KeyRound:', !!icons.KeyRound, 'ShieldCheck:', !!icons.ShieldCheck, 'EyeOff:', !!icons.EyeOff, 'Eye:', !!icons.Eye\\)\")",
+      "Bash(npx vite *)",
+      "Bash(curl -s -o /dev/null -w '%{http_code}' 'https://mvhdrooyijmgunldpyws.supabase.co/rest/v1/courses?select=course_id,year,semester_id&limit=5' -H 'apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im12aGRyb295aWptZ3VubGRweXdzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAyOTQxMzIsImV4cCI6MjA5NTg3MDEzMn0.sgEYuuey-wEQK5wkvUp-jz_259rlbKnBqgUrsK1C95k' -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im12aGRyb295aWptZ3VubGRweXdzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAyOTQxMzIsImV4cCI6MjA5NTg3MDEzMn0.sgEYuuey-wEQK5wkvUp-jz_259rlbKnBqgUrsK1C95k')",
+      "Bash(curl -s 'https://mvhdrooyijmgunldpyws.supabase.co/rest/v1/courses?select=course_id,year,semester_id&limit=5' -H 'apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im12aGRyb295aWptZ3VubGRweXdzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAyOTQxMzIsImV4cCI6MjA5NTg3MDEzMn0.sgEYuuey-wEQK5wkvUp-jz_259rlbKnBqgUrsK1C95k' -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im12aGRyb295aWptZ3VubGRweXdzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAyOTQxMzIsImV4cCI6MjA5NTg3MDEzMn0.sgEYuuey-wEQK5wkvUp-jz_259rlbKnBqgUrsK1C95k')"
+    ]
+  }
+}

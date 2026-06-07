@@ -1,0 +1,311 @@
+import React, { useState } from 'react';
+import { X, GraduationCap } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
+
+interface StudentAuthModalProps {
+  onClose: () => void;
+  initialTab?: 'login' | 'register';
+}
+
+type AuthTab = 'login' | 'register';
+
+export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({ onClose, initialTab = 'login' }) => {
+  const [tab, setTab] = useState<AuthTab>(initialTab);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
+
+  const [loginForm, setLoginForm] = useState({ email: '', password: '' });
+  const [registerForm, setRegisterForm] = useState({
+    student_id: '',
+    first_name: '',
+    last_name: '',
+    email: '',
+    password: '',
+  });
+
+  const handleGoogleLogin = async () => {
+    setLoading(true);
+    setError('');
+    const { error: oauthError } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: window.location.origin },
+    });
+    if (oauthError) {
+      setError(oauthError.message);
+      setLoading(false);
+    }
+  };
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loginForm.email || !loginForm.password) {
+      setError('กรุณากรอกอีเมลและรหัสผ่าน');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    const { error: loginError } = await supabase.auth.signInWithPassword({
+      email: loginForm.email,
+      password: loginForm.password,
+    });
+    if (loginError) {
+      setError(
+        loginError.message === 'Invalid login credentials'
+          ? 'อีเมลหรือรหัสผ่านไม่ถูกต้อง'
+          : loginError.message
+      );
+    } else {
+      onClose();
+    }
+    setLoading(false);
+  };
+
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const { student_id, first_name, last_name, email, password } = registerForm;
+    if (!student_id.trim() || !first_name.trim() || !last_name.trim()) {
+      setError('กรุณากรอกรหัสนักศึกษา ชื่อ และนามสกุล');
+      return;
+    }
+    if (!email || !password) {
+      setError('กรุณากรอกอีเมลและรหัสผ่าน');
+      return;
+    }
+    if (password.length < 6) {
+      setError('รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    const { data, error: signUpError } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          student_id: student_id.trim(),
+          first_name: first_name.trim(),
+          last_name: last_name.trim(),
+        },
+      },
+    });
+    if (signUpError) {
+      setError(
+        signUpError.message.includes('already registered')
+          ? 'อีเมลนี้ถูกสมัครแล้ว กรุณาเข้าสู่ระบบ'
+          : signUpError.message
+      );
+      setLoading(false);
+      return;
+    }
+    if (data.user && !data.session) {
+      setSuccessMsg(
+        'สมัครสมาชิกสำเร็จ! กรุณาตรวจสอบอีเมลเพื่อยืนยันตัวตน แล้วเข้าสู่ระบบอีกครั้ง'
+      );
+    } else {
+      onClose();
+    }
+    setLoading(false);
+  };
+
+  const switchTab = (newTab: AuthTab) => {
+    setTab(newTab);
+    setError('');
+    setSuccessMsg('');
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-white w-full max-w-md rounded-3xl border border-slate-200 shadow-xl overflow-hidden animate-in fade-in zoom-in duration-150">
+        {/* Header */}
+        <div className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white p-5 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
+              <GraduationCap size={16} />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold">นักศึกษา</h3>
+              <p className="text-[10px] text-emerald-100">สมัครหรือเข้าสู่ระบบเพื่อเข้าเรียน</p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg hover:bg-white/10 text-white/70 hover:text-white transition"
+          >
+            <X size={15} />
+          </button>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex border-b border-slate-100">
+          <button
+            onClick={() => switchTab('login')}
+            className={`flex-1 py-3 text-xs font-semibold transition-colors ${
+              tab === 'login'
+                ? 'text-emerald-600 border-b-2 border-emerald-600 bg-emerald-50/30'
+                : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            เข้าสู่ระบบ
+          </button>
+          <button
+            onClick={() => switchTab('register')}
+            className={`flex-1 py-3 text-xs font-semibold transition-colors ${
+              tab === 'register'
+                ? 'text-emerald-600 border-b-2 border-emerald-600 bg-emerald-50/30'
+                : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            สมัครสมาชิก
+          </button>
+        </div>
+
+        <div className="p-6 space-y-4">
+          {/* Google button */}
+          <button
+            onClick={handleGoogleLogin}
+            disabled={loading}
+            className="w-full flex items-center justify-center gap-2.5 px-4 py-2.5 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.98] transition disabled:opacity-50"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24">
+              <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+              <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+              <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+              <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+            </svg>
+            {tab === 'login' ? 'เข้าสู่ระบบด้วย Google' : 'สมัครด้วย Google'}
+          </button>
+
+          <div className="flex items-center gap-3">
+            <div className="flex-1 h-px bg-slate-100" />
+            <span className="text-[10px] text-slate-400 font-medium">หรือกรอกข้อมูล</span>
+            <div className="flex-1 h-px bg-slate-100" />
+          </div>
+
+          {/* Success message (email confirmation pending) */}
+          {successMsg ? (
+            <div className="bg-emerald-50 text-emerald-800 text-xs font-medium border border-emerald-200 p-4 rounded-xl leading-relaxed">
+              {successMsg}
+            </div>
+          ) : tab === 'login' ? (
+            /* Login Form */
+            <form onSubmit={handleLogin} className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">อีเมล</label>
+                <input
+                  type="email"
+                  value={loginForm.email}
+                  onChange={e => setLoginForm(f => ({ ...f, email: e.target.value }))}
+                  placeholder="student@example.com"
+                  className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">รหัสผ่าน</label>
+                <input
+                  type="password"
+                  value={loginForm.password}
+                  onChange={e => setLoginForm(f => ({ ...f, password: e.target.value }))}
+                  placeholder="••••••••"
+                  className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                />
+              </div>
+              {error && <p className="text-xs text-red-600 font-medium">{error}</p>}
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition active:scale-[0.98] disabled:opacity-50"
+              >
+                {loading ? 'กำลังเข้าสู่ระบบ...' : 'เข้าสู่ระบบ'}
+              </button>
+              <p className="text-center text-[11px] text-slate-500">
+                ยังไม่มีบัญชี?{' '}
+                <button
+                  type="button"
+                  onClick={() => switchTab('register')}
+                  className="text-emerald-600 font-semibold hover:underline"
+                >
+                  สมัครสมาชิก
+                </button>
+              </p>
+            </form>
+          ) : (
+            /* Register Form */
+            <form onSubmit={handleRegister} className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">รหัสนักศึกษา</label>
+                <input
+                  type="text"
+                  value={registerForm.student_id}
+                  onChange={e => setRegisterForm(f => ({ ...f, student_id: e.target.value }))}
+                  placeholder="เช่น 6401234567890"
+                  className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">ชื่อ</label>
+                  <input
+                    type="text"
+                    value={registerForm.first_name}
+                    onChange={e => setRegisterForm(f => ({ ...f, first_name: e.target.value }))}
+                    placeholder="ชื่อ"
+                    className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">นามสกุล</label>
+                  <input
+                    type="text"
+                    value={registerForm.last_name}
+                    onChange={e => setRegisterForm(f => ({ ...f, last_name: e.target.value }))}
+                    placeholder="นามสกุล"
+                    className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">อีเมล</label>
+                <input
+                  type="email"
+                  value={registerForm.email}
+                  onChange={e => setRegisterForm(f => ({ ...f, email: e.target.value }))}
+                  placeholder="student@example.com"
+                  className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">รหัสผ่าน</label>
+                <input
+                  type="password"
+                  value={registerForm.password}
+                  onChange={e => setRegisterForm(f => ({ ...f, password: e.target.value }))}
+                  placeholder="อย่างน้อย 6 ตัวอักษร"
+                  className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                />
+              </div>
+              {error && <p className="text-xs text-red-600 font-medium">{error}</p>}
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition active:scale-[0.98] disabled:opacity-50"
+              >
+                {loading ? 'กำลังสมัครสมาชิก...' : 'สมัครสมาชิก'}
+              </button>
+              <p className="text-center text-[11px] text-slate-500">
+                มีบัญชีแล้ว?{' '}
+                <button
+                  type="button"
+                  onClick={() => switchTab('login')}
+                  className="text-emerald-600 font-semibold hover:underline"
+                >
+                  เข้าสู่ระบบ
+                </button>
+              </p>
+            </form>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};

@@ -1,0 +1,6 @@
+{
+  "name": "Teaching Course Portfolio",
+  "description": "ระบบแสดงผลและจัดการโครงสร้างเอกสารประกอบการสอน งานส่ง และปฏิทินรายวิชาของ ผศ.ดร.ภัทราพร วรินทรเวช",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

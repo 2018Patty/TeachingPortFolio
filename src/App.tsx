@@ -1,0 +1,2865 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  BookOpen, 
+  Plus, 
+  Trash2, 
+  Edit, 
+  FileText, 
+  Video, 
+  Presentation, 
+  ExternalLink, 
+  ChevronRight, 
+  ArrowLeft, 
+  Clock, 
+  CheckCircle, 
+  AlertCircle, 
+  Lock, 
+  Sparkles, 
+  X, 
+  GraduationCap, 
+  BookMarked,
+  Layers,
+  Paperclip,
+  Eye,
+  MessageCircle,
+  Send,
+  Zap,
+  NotebookPen,
+  Timer,
+  ImageIcon,
+  KeyRound,
+  ShieldCheck,
+  Eye as EyeIcon,
+  EyeOff,
+  RefreshCw
+} from 'lucide-react';
+
+import { Role, StudentProfile, StudentCourseVisit, AssignmentSubmission, Course, Material, Assignment, MaterialType, AssignmentStatus, SiteProfile, Question, Reply, ActiveLearning, TeachingReflection, AL_TYPES } from './types';
+import { Navbar } from './components/Navbar';
+import { SemesterSelector } from './components/SemesterSelector';
+import { Footer } from './components/Footer';
+import { ProfilePage } from './components/ProfilePage';
+import { DashboardPage } from './components/DashboardPage';
+import { StudentAuthModal } from './components/StudentAuthModal';
+import { StudentProfilePage } from './components/StudentProfilePage';
+import { BackOffice } from './components/BackOffice';
+
+import { supabase } from '@/lib/supabase';
+
+const DEFAULT_PROFILE: SiteProfile = {
+  profile_name: 'ผศ.ดร.ภัทราพร วรินทรเวช',
+  profile_title: 'ผู้ช่วยศาสตราจารย์ ดร.',
+  profile_department: 'สาขาวิชาเทคโนโลยีสารสนเทศและการจัดการ',
+  profile_faculty: 'คณะวิทยาการจัดการ',
+  profile_university: 'มหาวิทยาลัยสงขลานครินทร์ วิทยาเขตหาดใหญ่',
+  profile_bio: '',
+  profile_email: 'pattaraporn.w@psu.ac.th',
+  profile_photo_url: '',
+  profile_link_url: '',
+  admin_password: 'admin123',
+};
+
+export default function App() {
+  // 1. Core Reactive States
+  const [role, setRole] = useState<Role>('guest');
+  const [currentPage, setCurrentPage] = useState<'courses' | 'profile' | 'dashboard' | 'student-profile' | 'admin-panel'>('courses');
+  const [siteProfile, setSiteProfile] = useState<SiteProfile>(DEFAULT_PROFILE);
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [dbError, setDbError] = useState<string>('');
+  const [materials, setMaterials] = useState<Material[]>([]);
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  
+  // 2. URL and Filtering parameters state
+  const [semester, setSemester] = useState<number>(1);
+  const [year, setYear] = useState<number>(2026);
+  const [yearsList, setYearsList] = useState<number[]>([2026, 2027, 2028]);
+
+  // 3. Navigation state
+  const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
+  const [courseDetailTab, setCourseDetailTab] = useState<'info' | 'materials' | 'assignments' | 'qa' | 'active_learning' | 'reflection'>('info');
+
+  // 4. Modals and Forms states
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [adminPassword, setAdminPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+
+  // Student auth state
+  const [studentProfile, setStudentProfile] = useState<StudentProfile | null>(null);
+  const [showStudentAuthModal, setShowStudentAuthModal] = useState(false);
+  const roleRef = useRef<Role>('guest');
+
+  // Course access gate: track which course the guest tried to open before login
+  const [pendingCourseId, setPendingCourseId] = useState<string | null>(null);
+  const pendingCourseIdRef = useRef<string | null>(null);
+  const [studentAuthInitialTab, setStudentAuthInitialTab] = useState<'login' | 'register'>('register');
+
+  // Enrollment code gate modal
+  const [showEnrollCodeModal, setShowEnrollCodeModal] = useState(false);
+  const [enrollCodeInput, setEnrollCodeInput] = useState('');
+  const [enrollCodeError, setEnrollCodeError] = useState('');
+  const [showEnrollCodePassword, setShowEnrollCodePassword] = useState(false);
+  const [pendingEnrollCourseId, setPendingEnrollCourseId] = useState<string | null>(null);
+
+  // Student tracking state
+  const [visits, setVisits] = useState<StudentCourseVisit[]>([]);
+  const [submissions, setSubmissions] = useState<AssignmentSubmission[]>([]);
+  const [allStudents, setAllStudents] = useState<StudentProfile[]>([]);
+
+  // Course Form Modal state
+  const [showCourseModal, setShowCourseModal] = useState(false);
+  const [editingCourse, setEditingCourse] = useState<Course | null>(null);
+  const [courseFormError, setCourseFormError] = useState('');
+  const [courseForm, setCourseForm] = useState({
+    course_code: '',
+    course_name_th: '',
+    course_name_en: '',
+    description: '',
+    objectivesInput: '',
+    semester_id: 1,
+    year: 2026,
+    credit: '3((3)-0-6)',
+    section: '01',
+    theory_hours: 0,
+    practice_hours: 0,
+    total_weeks: 15,
+    enrollment_code: '',
+  });
+
+  // Material Form Modal state
+  const [showMaterialModal, setShowMaterialModal] = useState(false);
+  const [editingMaterial, setEditingMaterial] = useState<Material | null>(null);
+  const [materialForm, setMaterialForm] = useState({
+    title: '',
+    type: 'slides' as MaterialType,
+    week_number: 1,
+    file_url: '',
+    description: ''
+  });
+
+  // Assignment Form Modal state
+  const [showAssignmentModal, setShowAssignmentModal] = useState(false);
+  const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null);
+
+  // Active Learning state
+  const [activities, setActivities] = useState<ActiveLearning[]>([]);
+  const [showActivityModal, setShowActivityModal] = useState(false);
+  const [editingActivity, setEditingActivity] = useState<ActiveLearning | null>(null);
+  const [activityForm, setActivityForm] = useState({ type_id: '', title: '', description: '', duration: '' });
+
+
+  // Teaching Reflection state
+  const [reflections, setReflections] = useState<TeachingReflection[]>([]);
+  const [showReflectionModal, setShowReflectionModal] = useState(false);
+  const [editingReflection, setEditingReflection] = useState<TeachingReflection | null>(null);
+  const [reflectionForm, setReflectionForm] = useState({ week_number: 1, content: '', image_url: '' });
+
+  // Q&A state
+  const [questions, setQuestions] = useState<Question[]>([]);
+  const [replies, setReplies] = useState<Reply[]>([]);
+  const [questionForm, setQuestionForm] = useState({ author_name: '', content: '' });
+  const [showQuestionForm, setShowQuestionForm] = useState(false);
+  const [replyTargetId, setReplyTargetId] = useState<string | null>(null);
+  const [replyForm, setReplyForm] = useState({ author_name: '', content: '' });
+  const [assignmentForm, setAssignmentForm] = useState({
+    title: '',
+    description: '',
+    due_date: '2026-06-30',
+    attachment_url: '',
+    status: 'open' as AssignmentStatus
+  });
+
+  // 5. Initialize lists and sync with URL Parameters
+  const loadAllData = async () => {
+    const [coursesRes, materialsRes, assignmentsRes, questionsRes, repliesRes, activitiesRes, reflectionsRes, profileRes, visitsRes, submissionsRes, studentsRes] = await Promise.all([
+      supabase.from('courses').select('*').order('year', { ascending: false }),
+      supabase.from('materials').select('*'),
+      supabase.from('assignments').select('*'),
+      supabase.from('questions').select('*').order('created_at', { ascending: true }),
+      supabase.from('replies').select('*').order('created_at', { ascending: true }),
+      supabase.from('active_learning').select('*').order('created_at', { ascending: true }),
+      supabase.from('teaching_reflections').select('*').order('week_number', { ascending: true }),
+      supabase.from('site_settings').select('*').eq('id', 1).maybeSingle(),
+      supabase.from('student_course_visits').select('*').order('visited_at', { ascending: false }),
+      supabase.from('assignment_submissions').select('*').order('submitted_at', { ascending: false }),
+      supabase.from('students').select('*'),
+    ]);
+    if (coursesRes.error) {
+      console.error('[DB] courses error:', coursesRes.error.message, coursesRes.error);
+      setDbError(`DB Error: ${coursesRes.error.message}`);
+    } else if (coursesRes.data) {
+      console.log('[DB] courses loaded:', coursesRes.data.length);
+      setDbError('');
+      setCourses(coursesRes.data as Course[]);
+    } else {
+      setDbError('DB returned null (check RLS policies)');
+    }
+    if (!materialsRes.error && materialsRes.data) {
+      setMaterials(materialsRes.data as Material[]);
+    }
+    if (!assignmentsRes.error && assignmentsRes.data) {
+      setAssignments(assignmentsRes.data as Assignment[]);
+    }
+    if (!questionsRes.error && questionsRes.data) {
+      setQuestions(questionsRes.data as Question[]);
+    }
+    if (!repliesRes.error && repliesRes.data) {
+      setReplies(repliesRes.data as Reply[]);
+    }
+    if (!activitiesRes.error && activitiesRes.data) {
+      setActivities(activitiesRes.data as ActiveLearning[]);
+    }
+    if (!reflectionsRes.error && reflectionsRes.data) {
+      setReflections(reflectionsRes.data as TeachingReflection[]);
+    }
+    if (!profileRes.error && profileRes.data) {
+      setSiteProfile({ ...DEFAULT_PROFILE, ...profileRes.data });
+    }
+    if (!visitsRes.error && visitsRes.data) {
+      setVisits(visitsRes.data as StudentCourseVisit[]);
+    }
+    if (!submissionsRes.error && submissionsRes.data) {
+      setSubmissions(submissionsRes.data as AssignmentSubmission[]);
+    }
+    if (!studentsRes.error && studentsRes.data) {
+      setAllStudents(studentsRes.data as StudentProfile[]);
+    }
+  };
+
+  const handleSaveProfile = async (data: Partial<SiteProfile>) => {
+    const { error } = await supabase
+      .from('site_settings')
+      .upsert({ id: 1, ...data }, { onConflict: 'id' });
+    if (error) throw new Error(error.message);
+    setSiteProfile((prev: SiteProfile) => ({ ...prev, ...data }));
+  };
+
+  const handlePasswordChange = async (oldPw: string, newPw: string): Promise<{ success: boolean; message: string }> => {
+    if (oldPw !== siteProfile.admin_password) {
+      return { success: false, message: 'รหัสผ่านปัจจุบันไม่ถูกต้อง กรุณาลองใหม่' };
+    }
+    const { error } = await supabase
+      .from('site_settings')
+      .upsert({ id: 1, admin_password: newPw }, { onConflict: 'id' });
+    if (error) return { success: false, message: `เกิดข้อผิดพลาด: ${error.message}` };
+    setSiteProfile((prev: SiteProfile) => ({ ...prev, admin_password: newPw }));
+    return { success: true, message: 'เปลี่ยนรหัสผ่านสำเร็จแล้ว!' };
+  };
+
+  const handlePhotoUpload = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error('ไม่สามารถอ่านไฟล์รูปได้'));
+      reader.readAsDataURL(file);
+    });
+  };
+
+  useEffect(() => {
+    // Sync state with URL params on mount
+    const params = new URLSearchParams(window.location.search);
+    const semParam = params.get('semester');
+    const yrParam = params.get('year');
+
+    if (semParam) {
+      const parsedSem = parseInt(semParam, 10);
+      if (parsedSem === 1 || parsedSem === 2) setSemester(parsedSem);
+    }
+    if (yrParam) {
+      const parsedYr = parseInt(yrParam, 10);
+      if (parsedYr >= 2026) setYear(parsedYr);
+    }
+
+    loadAllData();
+  }, []);
+
+  // Keep roleRef in sync for use in onAuthStateChange closure
+  useEffect(() => {
+    roleRef.current = role;
+  }, [role]);
+
+  // Supabase Auth listener for student sessions
+  useEffect(() => {
+    let mounted = true;
+
+    // Build/fetch student profile and set role — wrapped in try/catch so
+    // setRole('student') is ALWAYS called even if DB operations fail.
+    const applyStudentSession = async (user: { id: string; email?: string; user_metadata?: Record<string, string> }) => {
+      if (!mounted || roleRef.current === 'admin') return;
+
+      let profile: StudentProfile;
+      try {
+        const { data } = await supabase
+          .from('students')
+          .select('*')
+          .eq('id', user.id)
+          .maybeSingle();
+
+        if (data) {
+          profile = data as StudentProfile;
+        } else {
+          profile = {
+            id: user.id,
+            student_id: user.user_metadata?.student_id || '',
+            first_name: user.user_metadata?.first_name || user.user_metadata?.given_name || '',
+            last_name: user.user_metadata?.last_name || user.user_metadata?.family_name || '',
+            email: user.email || '',
+            avatar_url: user.user_metadata?.avatar_url || user.user_metadata?.picture || '',
+          };
+          await supabase.from('students').insert(profile);
+        }
+      } catch {
+        // DB unavailable — still allow login with session data
+        profile = {
+          id: user.id,
+          student_id: '',
+          first_name: user.user_metadata?.given_name || '',
+          last_name: user.user_metadata?.family_name || '',
+          email: user.email || '',
+          avatar_url: user.user_metadata?.picture || '',
+        };
+      }
+
+      if (!mounted) return;
+      setStudentProfile(profile);
+      setRole('student');
+
+      // Reload this student's visits so enrollment-code gate works correctly across sessions
+      supabase
+        .from('student_course_visits')
+        .select('*')
+        .eq('student_id', user.id)
+        .order('visited_at', { ascending: false })
+        .then(({ data }) => {
+          if (data && mounted) {
+            setVisits(prev => {
+              const existingIds = new Set(data.map((v: StudentCourseVisit) => v.visit_id));
+              const merged = [...data, ...prev.filter((v: StudentCourseVisit) => !existingIds.has(v.visit_id))];
+              return merged as StudentCourseVisit[];
+            });
+          }
+        });
+
+      if (!profile.student_id && !pendingCourseIdRef.current) {
+        setCurrentPage('student-profile');
+      }
+    };
+
+    // Explicit session check: catches OAuth redirect sessions where
+    // onAuthStateChange INITIAL_SESSION might fire before tokens are processed.
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user && roleRef.current !== 'admin') {
+        applyStudentSession(session.user);
+      }
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session?.user) {
+          await applyStudentSession(session.user);
+        } else if (event === 'SIGNED_OUT') {
+          // Only reset to guest if WE are not in the middle of an admin login
+          if (mounted && roleRef.current !== 'admin') {
+            setStudentProfile(null);
+            setRole('guest');
+          }
+        }
+      }
+    );
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Update dynamic academic years from course dataset; auto-select the most recent year/semester if current filter has no results
+  useEffect(() => {
+    if (courses.length === 0) return;
+    const yearsInDB = courses.map(c => c.year);
+    const uniqueYears = Array.from(new Set([...yearsInDB])).sort((a, b) => a - b);
+    setYearsList(uniqueYears);
+
+    // If currently selected year/semester shows no courses, jump to the most recent one
+    const hasMatch = courses.some(c => c.semester_id === semester && c.year === year);
+    if (!hasMatch) {
+      const sorted = [...courses].sort((a, b) =>
+        b.year !== a.year ? b.year - a.year : b.semester_id - a.semester_id
+      );
+      setSemester(sorted[0].semester_id);
+      setYear(sorted[0].year);
+    }
+  }, [courses]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // After login, navigate to the course that triggered the login prompt (with enrollment code gate)
+  useEffect(() => {
+    if (role !== 'student' || !pendingCourseId) return;
+    const cid = pendingCourseId;
+    setPendingCourseId(null);
+    pendingCourseIdRef.current = null;
+    openCourseOrPromptCode(cid, visits, studentProfile?.id);
+  }, [role, pendingCourseId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sync state back to Browser URL address bar
+  const handleSemesterYearChange = (newSemester: number, newYear: number) => {
+    setSemester(newSemester);
+    setYear(newYear);
+
+    const url = new URL(window.location.href);
+    url.searchParams.set('semester', newSemester.toString());
+    url.searchParams.set('year', newYear.toString());
+    // Also reset any open course detail to prevent displaying a course in the wrong sem unless clicked
+    setSelectedCourseId(null);
+    window.history.pushState({}, '', url.toString());
+  };
+
+  // Back button for course detail
+  const handleBackToList = () => {
+    setSelectedCourseId(null);
+  };
+
+  // Select a course and increment its view count; track student visit
+  // Navigate to course and record the first visit (called after all gates pass)
+  const proceedToCourse = (courseId: string) => {
+    setCurrentPage('courses');
+    setSelectedCourseId(courseId);
+    setCourseDetailTab('info');
+    setCourses(prevCourses =>
+      prevCourses.map((c: Course) => {
+        if (c.course_id !== courseId) return c;
+        const newViews = (c.views || 0) + 1;
+        supabase.from('courses').update({ views: newViews }).eq('course_id', courseId);
+        return { ...c, views: newViews };
+      })
+    );
+    if (roleRef.current === 'student' && studentProfile?.id) {
+      const alreadyHasVisit = visits.some(v => v.student_id === studentProfile.id && v.course_id === courseId);
+      if (!alreadyHasVisit) {
+        const visit_id = `v-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+        const visit: StudentCourseVisit = {
+          visit_id,
+          student_id: studentProfile.id,
+          course_id: courseId,
+          visited_at: new Date().toISOString(),
+        };
+        supabase.from('student_course_visits').insert(visit).then(({ error }) => {
+          if (error) console.error('[DB] visit insert error:', error.message);
+        });
+        setVisits(prev => [visit, ...prev]);
+      }
+    }
+  };
+
+  // Check if enrollment code is required, then open or prompt
+  const openCourseOrPromptCode = (courseId: string, currentVisits: StudentCourseVisit[], currentStudentId?: string) => {
+    // Use the latest visits from state to avoid stale closure
+    const latestVisits = visits.length >= currentVisits.length ? visits : currentVisits;
+    const latestStudentId = studentProfile?.id || currentStudentId;
+    const alreadyEnrolled = latestVisits.some(v => v.student_id === latestStudentId && v.course_id === courseId);
+    if (alreadyEnrolled) {
+      setCurrentPage('courses');
+      setSelectedCourseId(courseId);
+      setCourseDetailTab('info');
+      return;
+    }
+    const course = courses.find(c => c.course_id === courseId);
+    if (course?.enrollment_code?.trim()) {
+      setPendingEnrollCourseId(courseId);
+      setEnrollCodeInput('');
+      setEnrollCodeError('');
+      setShowEnrollCodePassword(false);
+      setShowEnrollCodeModal(true);
+    } else {
+      proceedToCourse(courseId);
+    }
+  };
+
+  const handleEnrollCodeSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pendingEnrollCourseId) return;
+    const course = courses.find(c => c.course_id === pendingEnrollCourseId);
+    if (!course) return;
+    if (enrollCodeInput.trim() === course.enrollment_code?.trim()) {
+      setShowEnrollCodeModal(false);
+      setEnrollCodeInput('');
+      setEnrollCodeError('');
+      const cid = pendingEnrollCourseId;
+      setPendingEnrollCourseId(null);
+      proceedToCourse(cid);
+    } else {
+      setEnrollCodeError('รหัสลงทะเบียนไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง');
+    }
+  };
+
+  const handleSelectCourse = (courseId: string) => {
+    if (role === 'guest') {
+      pendingCourseIdRef.current = courseId;
+      setPendingCourseId(courseId);
+      setStudentAuthInitialTab('register');
+      setShowStudentAuthModal(true);
+      return;
+    }
+    if (role === 'student') {
+      openCourseOrPromptCode(courseId, visits, studentProfile?.id);
+      return;
+    }
+    // admin: open directly without enrollment gate
+    proceedToCourse(courseId);
+  };
+
+  // Q&A Handlers
+  const handlePostQuestion = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!selectedCourseId || !questionForm.author_name.trim() || !questionForm.content.trim()) return;
+    const question_id = `q-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const newQ: Question = {
+      question_id,
+      course_id: selectedCourseId,
+      author_name: questionForm.author_name.trim(),
+      content: questionForm.content.trim(),
+    };
+    const { error } = await supabase.from('questions').insert(newQ);
+    if (error) { alert(`ไม่สามารถส่งคำถามได้: ${error.message}`); return; }
+    setQuestions([...questions, newQ]);
+    setQuestionForm({ author_name: '', content: '' });
+    setShowQuestionForm(false);
+  };
+
+  const handlePostReply = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!replyTargetId || !replyForm.author_name.trim() || !replyForm.content.trim()) return;
+    const reply_id = `r-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const newReply: Reply = {
+      reply_id,
+      question_id: replyTargetId,
+      author_name: replyForm.author_name.trim(),
+      content: replyForm.content.trim(),
+      is_instructor: role === 'admin',
+    };
+    const { error } = await supabase.from('replies').insert(newReply);
+    if (error) { alert(`ไม่สามารถส่งคำตอบได้: ${error.message}`); return; }
+    setReplies([...replies, newReply]);
+    setReplyForm({ author_name: '', content: '' });
+    setReplyTargetId(null);
+  };
+
+  const handleDeleteReply = async (replyId: string) => {
+    if (!confirm('ลบการตอบกลับนี้?')) return;
+    const { error } = await supabase.from('replies').delete().eq('reply_id', replyId);
+    if (error) { alert(`ไม่สามารถลบได้: ${error.message}`); return; }
+    setReplies(replies.filter((r: Reply) => r.reply_id !== replyId));
+  };
+
+  const handleDeleteQuestion = async (questionId: string) => {
+    if (!confirm('ลบกระทู้นี้และการตอบกลับทั้งหมด?')) return;
+    const { error } = await supabase.from('questions').delete().eq('question_id', questionId);
+    if (error) { alert(`ไม่สามารถลบคำถามได้: ${error.message}`); return; }
+    setQuestions(questions.filter((q: Question) => q.question_id !== questionId));
+    setReplies(replies.filter((r: Reply) => r.question_id !== questionId));
+  };
+
+  // Active Learning Handlers
+  const handleSaveActivity = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!selectedCourseId) return;
+    const selectedType = AL_TYPES.find(t => t.type_id === activityForm.type_id);
+    const resolvedTitle = activityForm.title.trim() || selectedType?.name || '';
+    if (!resolvedTitle) { alert('กรุณาเลือกประเภทกิจกรรมหรือระบุชื่อกิจกรรม'); return; }
+
+    if (editingActivity) {
+      const updateData = { type_id: activityForm.type_id, title: resolvedTitle, description: activityForm.description.trim(), duration: activityForm.duration.trim() };
+      const { error } = await supabase.from('active_learning').update(updateData).eq('activity_id', editingActivity.activity_id);
+      if (error) { alert(`ไม่สามารถแก้ไขกิจกรรมได้: ${error.message}`); return; }
+      setActivities(activities.map((a: ActiveLearning) => a.activity_id === editingActivity.activity_id ? { ...a, ...updateData } : a));
+      setEditingActivity(null);
+    } else {
+      const activity_id = `al-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      const newActivity: ActiveLearning = { activity_id, course_id: selectedCourseId, type_id: activityForm.type_id, title: resolvedTitle, description: activityForm.description.trim(), duration: activityForm.duration.trim() };
+      const { error } = await supabase.from('active_learning').insert(newActivity);
+      if (error) { alert(`ไม่สามารถเพิ่มกิจกรรมได้: ${error.message}`); return; }
+      setActivities([...activities, newActivity]);
+    }
+    setShowActivityModal(false);
+    setActivityForm({ type_id: '', title: '', description: '', duration: '' });
+  };
+
+  const handleDeleteActivity = async (activityId: string) => {
+    if (!confirm('ลบกิจกรรม Active Learning นี้?')) return;
+    const { error } = await supabase.from('active_learning').delete().eq('activity_id', activityId);
+    if (error) { alert(`ไม่สามารถลบได้: ${error.message}`); return; }
+    setActivities(activities.filter((a: ActiveLearning) => a.activity_id !== activityId));
+  };
+
+  const handleEditActivityClick = (activity: ActiveLearning) => {
+    setEditingActivity(activity);
+    setActivityForm({ type_id: activity.type_id || '', title: activity.title, description: activity.description, duration: activity.duration });
+    setShowActivityModal(true);
+  };
+
+  // Teaching Reflection Handlers
+  const handleSaveReflection = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!selectedCourseId) return;
+    if (editingReflection) {
+      const updateData = { week_number: Number(reflectionForm.week_number), content: reflectionForm.content.trim(), image_url: reflectionForm.image_url || undefined };
+      const { error } = await supabase.from('teaching_reflections').update(updateData).eq('reflection_id', editingReflection.reflection_id);
+      if (error) { alert(`ไม่สามารถแก้ไขบันทึกได้: ${error.message}`); return; }
+      setReflections(reflections.map((r: TeachingReflection) => r.reflection_id === editingReflection.reflection_id ? { ...r, ...updateData } : r));
+      setEditingReflection(null);
+    } else {
+      const reflection_id = `ref-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      const newRef: TeachingReflection = { reflection_id, course_id: selectedCourseId, week_number: Number(reflectionForm.week_number), content: reflectionForm.content.trim(), image_url: reflectionForm.image_url || undefined };
+      const { error } = await supabase.from('teaching_reflections').insert(newRef);
+      if (error) { alert(`ไม่สามารถบันทึกได้: ${error.message}`); return; }
+      setReflections([...reflections, newRef]);
+    }
+    setShowReflectionModal(false);
+    setReflectionForm({ week_number: 1, content: '', image_url: '' });
+  };
+
+  const handleDeleteReflection = async (reflectionId: string) => {
+    if (!confirm('ลบบันทึกหลังสอนนี้?')) return;
+    const { error } = await supabase.from('teaching_reflections').delete().eq('reflection_id', reflectionId);
+    if (error) { alert(`ไม่สามารถลบได้: ${error.message}`); return; }
+    setReflections(reflections.filter((r: TeachingReflection) => r.reflection_id !== reflectionId));
+  };
+
+  const handleEditReflectionClick = (reflection: TeachingReflection) => {
+    setEditingReflection(reflection);
+    setReflectionForm({ week_number: reflection.week_number, content: reflection.content, image_url: reflection.image_url || '' });
+    setShowReflectionModal(true);
+  };
+
+  // 6. Pastel Colors Palette definition per course position (Index modulo 4)
+  const getCourseColors = (index: number) => {
+    const palette = [
+      {
+        bg: 'bg-[#DBEAFE]/95 border-[#93C5FD]',
+        text: 'text-[#1D4ED8]',
+        badge: 'bg-[#1D4ED8]/10 text-[#1D4ED8] border-[#1D4ED8]/25',
+        button: 'bg-[#1D4ED8] hover:bg-[#153eb2] text-white',
+        border: 'border-[#DBEAFE]'
+      },
+      {
+        bg: 'bg-[#FCE7F3]/95 border-[#FBCFE8]',
+        text: 'text-[#9D174D]',
+        badge: 'bg-[#9D174D]/10 text-[#9D174D] border-[#9D174D]/25',
+        button: 'bg-[#9D174D] hover:bg-[#7e0f3b] text-white',
+        border: 'border-[#FCE7F3]'
+      },
+      {
+        bg: 'bg-[#DCFCE7]/95 border-[#86EFAC]',
+        text: 'text-[#15803D]',
+        badge: 'bg-[#15803D]/10 text-[#15803D] border-[#15803D]/25',
+        button: 'bg-[#15803D] hover:bg-[#0f602c] text-white',
+        border: 'border-[#DCFCE7]'
+      },
+      {
+        bg: 'bg-[#F3E8FF]/95 border-[#D8B4FE]',
+        text: 'text-[#7E22CE]',
+        badge: 'bg-[#7E22CE]/10 text-[#7E22CE] border-[#7E22CE]/25',
+        button: 'bg-[#7E22CE] hover:bg-[#6219a1] text-white',
+        border: 'border-[#F3E8FF]'
+      }
+    ];
+    return palette[index % 4];
+  };
+
+  // Filtered course items
+  const filteredCourses = courses.filter(
+    (c) => c.semester_id === semester && c.year === year
+  );
+
+  const activeCourse = courses.find((c) => c.course_id === selectedCourseId);
+  const activeCourseMaterials = materials.filter((m) => m.course_id === selectedCourseId);
+  const activeCourseAssignments = assignments.filter((a) => a.course_id === selectedCourseId);
+  const activeCourseQuestions = questions.filter((q: Question) => q.course_id === selectedCourseId);
+  const activeCourseActivities = activities.filter((a: ActiveLearning) => a.course_id === selectedCourseId);
+  const activeCourseReflections = reflections.filter((r: TeachingReflection) => r.course_id === selectedCourseId);
+
+  // 7. Security and Authentication handlers
+  const handleAdminLogin = () => {
+    const storedPw = siteProfile.admin_password || 'admin123';
+    if (adminPassword === storedPw) {
+      // Guard ref immediately so SIGNED_OUT callback cannot override admin role
+      roleRef.current = 'admin';
+      // Fire-and-forget: clear any student OAuth session without blocking
+      supabase.auth.signOut().catch(() => {});
+      setStudentProfile(null);
+      setRole('admin');
+      setShowLoginModal(false);
+      setAdminPassword('');
+      setLoginError('');
+    } else {
+      setLoginError('รหัสผ่านไม่ถูกต้อง! กรุณาลองใหม่');
+    }
+  };
+
+  const handleAdminLogout = () => {
+    roleRef.current = 'guest';
+    setRole('guest');
+    setCurrentPage('courses');
+    setSelectedCourseId(null);
+  };
+
+  const handleStudentLogout = async () => {
+    await supabase.auth.signOut();
+    setStudentProfile(null);
+    setRole('guest');
+    setCurrentPage('courses');
+    setSelectedCourseId(null);
+  };
+
+  const handleUpdateStudentProfile = (updated: StudentProfile) => {
+    setStudentProfile(updated);
+  };
+
+  // 8. CRUD Handlers
+  // Save or Add course
+  const handleSaveCourse = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!courseForm.course_code.trim()) {
+      setCourseFormError('กรุณากรอกรหัสวิชา *');
+      return;
+    }
+    if (!courseForm.course_name_th.trim()) {
+      setCourseFormError('กรุณากรอกชื่อรายวิชาภาษาไทย *');
+      return;
+    }
+    if (!courseForm.course_name_en.trim()) {
+      setCourseFormError('กรุณากรอกชื่อรายวิชาภาษาอังกฤษ *');
+      return;
+    }
+    setCourseFormError('');
+    const objectives = courseForm.objectivesInput
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+
+    if (editingCourse) {
+      const updateData = {
+        course_code: courseForm.course_code.trim(),
+        course_name_th: courseForm.course_name_th.trim(),
+        course_name_en: courseForm.course_name_en.trim(),
+        description: courseForm.description.trim(),
+        objectives,
+        semester_id: courseForm.semester_id,
+        year: courseForm.year,
+        credit: courseForm.credit.trim() || '3((3)-0-6)',
+        section: courseForm.section.trim() || '01',
+        theory_hours: Number(courseForm.theory_hours),
+        practice_hours: Number(courseForm.practice_hours),
+        total_weeks: Number(courseForm.total_weeks) || 15,
+        enrollment_code: courseForm.enrollment_code.trim(),
+      };
+      const { error } = await supabase.from('courses').update(updateData).eq('course_id', editingCourse.course_id);
+      if (error) { alert(`ไม่สามารถแก้ไขวิชาได้: ${error.message}`); return; }
+      setCourses(courses.map((c: Course) => c.course_id === editingCourse.course_id ? { ...c, ...updateData } : c));
+    } else {
+      const course_id = `${courseForm.course_code.trim()}-${courseForm.semester_id}-${courseForm.year}`;
+      const newCourse: Course = {
+        course_id,
+        course_code: courseForm.course_code.trim(),
+        course_name_th: courseForm.course_name_th.trim(),
+        course_name_en: courseForm.course_name_en.trim(),
+        description: courseForm.description.trim(),
+        objectives,
+        semester_id: courseForm.semester_id,
+        year: courseForm.year,
+        credit: courseForm.credit.trim() || '3((3)-0-6)',
+        section: courseForm.section.trim() || '01',
+        theory_hours: Number(courseForm.theory_hours),
+        practice_hours: Number(courseForm.practice_hours),
+        total_weeks: Number(courseForm.total_weeks) || 15,
+        enrollment_code: courseForm.enrollment_code.trim(),
+        views: 0
+      };
+      const { error } = await supabase.from('courses').insert(newCourse);
+      if (error) { alert(`ไม่สามารถเพิ่มวิชาได้: ${error.message}`); return; }
+      setCourses([...courses, newCourse]);
+    }
+
+    setShowCourseModal(false);
+    setEditingCourse(null);
+  };
+
+  const handleEditCourseClick = (course: Course, e: React.MouseEvent) => {
+    e.stopPropagation(); // Avoid triggering details navigation
+    setEditingCourse(course);
+    setCourseForm({
+      course_code: course.course_code,
+      course_name_th: course.course_name_th,
+      course_name_en: course.course_name_en,
+      description: course.description,
+      objectivesInput: course.objectives.join('\n'),
+      semester_id: course.semester_id,
+      year: course.year,
+      credit: course.credit || '3((3)-0-6)',
+      section: course.section || '01',
+      theory_hours: course.theory_hours ?? 0,
+      practice_hours: course.practice_hours ?? 0,
+      total_weeks: course.total_weeks ?? 15,
+      enrollment_code: course.enrollment_code || '',
+    });
+    setShowCourseModal(true);
+  };
+
+  const handleDeleteCourse = async (courseId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (confirm('คุณต้องการลบรายวิชานี้ใช่หรือไม่? (ข้อมูลเอกสารและการส่งงานที่เกี่ยวข้องจะถูกซ่อน)')) {
+      const { error } = await supabase.from('courses').delete().eq('course_id', courseId);
+      if (error) { alert(`ไม่สามารถลบวิชาได้: ${error.message}`); return; }
+      setCourses(courses.filter((c: Course) => c.course_id !== courseId));
+      if (selectedCourseId === courseId) setSelectedCourseId(null);
+    }
+  };
+
+  const handleEditMaterialClick = (material: Material) => {
+    setEditingMaterial(material);
+    setMaterialForm({
+      title: material.title,
+      type: material.type,
+      week_number: material.week_number ?? 1,
+      file_url: material.file_url,
+      description: material.description || ''
+    });
+    setShowMaterialModal(true);
+  };
+
+  const handleEditAssignmentClick = (assignment: Assignment) => {
+    setEditingAssignment(assignment);
+    setAssignmentForm({
+      title: assignment.title,
+      description: assignment.description,
+      due_date: assignment.due_date,
+      attachment_url: assignment.attachment_url || '',
+      status: assignment.status
+    });
+    setShowAssignmentModal(true);
+  };
+
+  // Called from BackOffice (no MouseEvent)
+  const handleEditCourseFromBackOffice = (course: Course) => {
+    setEditingCourse(course);
+    setCourseForm({
+      course_code: course.course_code,
+      course_name_th: course.course_name_th,
+      course_name_en: course.course_name_en,
+      description: course.description,
+      objectivesInput: course.objectives.join('\n'),
+      semester_id: course.semester_id,
+      year: course.year,
+      credit: course.credit || '3((3)-0-6)',
+      section: course.section || '01',
+      theory_hours: course.theory_hours || 0,
+      practice_hours: course.practice_hours || 0,
+      total_weeks: course.total_weeks || 15,
+      enrollment_code: course.enrollment_code || '',
+    });
+    setShowCourseModal(true);
+  };
+
+  // Navigate to course in main view with specific tab
+  const handleBackOfficeNavigateToCourse = (courseId: string, tab: string) => {
+    setSelectedCourseId(courseId);
+    setCourseDetailTab(tab as 'info' | 'materials' | 'assignments' | 'qa' | 'active_learning' | 'reflection');
+    setCurrentPage('courses');
+  };
+
+  const handleAddCourseClick = () => {
+    setEditingCourse(null);
+    setCourseForm({
+      course_code: '',
+      course_name_th: '',
+      course_name_en: '',
+      description: '',
+      objectivesInput: '',
+      semester_id: semester,
+      year: year,
+      credit: '3((3)-0-6)',
+      section: '01',
+      theory_hours: 0,
+      practice_hours: 0,
+      total_weeks: 15,
+      enrollment_code: '',
+    });
+    setShowCourseModal(true);
+  };
+
+  // Add or Edit teaching material
+  const handleAddMaterial = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!selectedCourseId) return;
+
+    if (editingMaterial) {
+      const updateData = {
+        title: materialForm.title.trim(),
+        type: materialForm.type,
+        week_number: Number(materialForm.week_number),
+        file_url: materialForm.file_url.trim() || 'https://example.com',
+        description: materialForm.description.trim()
+      };
+      const { error } = await supabase.from('materials').update(updateData).eq('material_id', editingMaterial.material_id);
+      if (error) { alert(`ไม่สามารถแก้ไขเอกสารได้: ${error.message}`); return; }
+      setMaterials(materials.map((m: Material) => m.material_id === editingMaterial.material_id ? { ...m, ...updateData } : m));
+      setEditingMaterial(null);
+    } else {
+      const material_id = `mat-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+      const newMaterial: Material = {
+        material_id,
+        course_id: selectedCourseId,
+        title: materialForm.title.trim(),
+        type: materialForm.type,
+        week_number: Number(materialForm.week_number),
+        file_url: materialForm.file_url.trim() || 'https://example.com',
+        description: materialForm.description.trim()
+      };
+      const { error } = await supabase.from('materials').insert(newMaterial);
+      if (error) { alert(`ไม่สามารถเพิ่มเอกสารได้: ${error.message}`); return; }
+      setMaterials([...materials, newMaterial]);
+    }
+
+    setShowMaterialModal(false);
+    setMaterialForm({ title: '', type: 'slides', week_number: 1, file_url: '', description: '' });
+  };
+
+  const handleDeleteMaterial = async (materialId: string) => {
+    if (confirm('ยืนยันระบบลบเอกสารการเรียนการสอนนี้?')) {
+      const { error } = await supabase.from('materials').delete().eq('material_id', materialId);
+      if (error) { alert(`ไม่สามารถลบเอกสารได้: ${error.message}`); return; }
+      setMaterials(materials.filter((m: Material) => m.material_id !== materialId));
+    }
+  };
+
+  // Add or Edit Assignment
+  const handleAddAssignment = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!selectedCourseId) return;
+
+    if (editingAssignment) {
+      const updateData = {
+        title: assignmentForm.title.trim(),
+        description: assignmentForm.description.trim(),
+        due_date: assignmentForm.due_date,
+        attachment_url: assignmentForm.attachment_url.trim() || '',
+        status: assignmentForm.status
+      };
+      const { error } = await supabase.from('assignments').update(updateData).eq('assignment_id', editingAssignment.assignment_id);
+      if (error) { alert(`ไม่สามารถแก้ไขงานมอบหมายได้: ${error.message}`); return; }
+      setAssignments(assignments.map((a: Assignment) => a.assignment_id === editingAssignment.assignment_id ? { ...a, ...updateData } : a));
+      setEditingAssignment(null);
+    } else {
+      const assignment_id = `asm-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+      const newAssignment: Assignment = {
+        assignment_id,
+        course_id: selectedCourseId,
+        title: assignmentForm.title.trim(),
+        description: assignmentForm.description.trim(),
+        due_date: assignmentForm.due_date,
+        attachment_url: assignmentForm.attachment_url.trim() || undefined,
+        status: assignmentForm.status
+      };
+      const { error } = await supabase.from('assignments').insert(newAssignment);
+      if (error) { alert(`ไม่สามารถเพิ่มงานมอบหมายได้: ${error.message}`); return; }
+      setAssignments([...assignments, newAssignment]);
+    }
+
+    setShowAssignmentModal(false);
+    setAssignmentForm({ title: '', description: '', due_date: '2026-06-30', attachment_url: '', status: 'open' });
+  };
+
+  const handleDeleteAssignment = async (assignmentId: string) => {
+    if (confirm('ยืนยันความต้องการที่จะลบงานมอบหมายนี้ใช่หรือไม่?')) {
+      const { error } = await supabase.from('assignments').delete().eq('assignment_id', assignmentId);
+      if (error) { alert(`ไม่สามารถลบงานมอบหมายได้: ${error.message}`); return; }
+      setAssignments(assignments.filter((a: Assignment) => a.assignment_id !== assignmentId));
+    }
+  };
+
+
+  return (
+    <div className="min-h-screen flex flex-col bg-[#F8FAFC]">
+      {/* 1. Header Navigation */}
+      <Navbar
+        currentRole={role}
+        currentPage={currentPage}
+        studentProfile={studentProfile}
+        onLogin={() => setShowLoginModal(true)}
+        onLogout={handleAdminLogout}
+        onStudentLogin={() => { setStudentAuthInitialTab('register'); setShowStudentAuthModal(true); }}
+        onStudentLogout={handleStudentLogout}
+        onNavigate={(page) => { setCurrentPage(page); setSelectedCourseId(null); }}
+      />
+
+      {/* 2. Top Portal Announcement — hidden on profile page */}
+      {currentPage === 'courses' && <div className="bg-gradient-to-r from-indigo-900 via-indigo-800 to-indigo-950 text-white py-12 px-4 shadow-inner relative overflow-hidden">
+        {/* Abstract design elements */}
+        <div className="absolute top-0 right-0 w-80 h-80 rounded-full bg-indigo-500/10 blur-3xl pointer-events-none"></div>
+        <div className="absolute -bottom-10 left-10 w-60 h-60 rounded-full bg-emerald-500/5 blur-3xl pointer-events-none"></div>
+
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-8 relative z-10">
+          <div className="space-y-4 max-w-2xl text-center md:text-left">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 shadow-sm">
+              <Sparkles size={12} className="animate-pulse" />
+              <span>ระบบจัดการความรู้รายวิชา</span>
+            </div>
+            
+            <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight">
+              Teaching Portfolio
+            </h1>
+            <p className="text-slate-300 text-sm sm:text-base leading-relaxed font-normal">
+              ยินดีต้อนรับสู่ระบบจัดการความรู้รายวิชาโดย <span className="text-white font-semibold">{siteProfile.profile_name}</span>. สามารถค้นคว้าสไลด์ประกอบการสอน ตารางส่งงาน และติดตามการวัดเบื้องต้นตามรายบทของภาคเรียนต่าง ๆ
+            </p>
+            
+            {siteProfile.profile_link_url && (
+              <div className="flex flex-wrap items-center justify-center md:justify-start gap-4 pt-2">
+                <a
+                  href={siteProfile.profile_link_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-xs text-white font-medium bg-[#4F46E5] hover:bg-indigo-500 px-5 py-2.5 rounded-xl transition duration-150 shadow-lg shadow-indigo-900/30 active:scale-95"
+                >
+                  <GraduationCap size={16} />
+                  <span>ข้อมูล Profile อาจารย์</span>
+                  <ExternalLink size={12} />
+                </a>
+              </div>
+            )}
+          </div>
+
+          {/* Quick Stats/Instructor Badge */}
+          <div className="bg-white/5 backdrop-blur-md border border-white/15 rounded-3xl p-6 w-full max-w-xs space-y-4 text-center md:text-left">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-indigo-500/20 flex items-center justify-center text-indigo-300 font-bold border border-white/10 text-xs">
+                {siteProfile.profile_name.charAt(0)}
+              </div>
+              <div className="text-left">
+                <div className="text-xs text-indigo-300 font-bold tracking-wider">เจ้าของผลงาน</div>
+                <div className="text-sm font-bold text-white leading-tight">{siteProfile.profile_name}</div>
+                {siteProfile.profile_title && (
+                  <div className="text-[10px] text-indigo-300/70 leading-tight">{siteProfile.profile_title}</div>
+                )}
+              </div>
+            </div>
+            
+            <div className="border-t border-white/10 pt-3.5 grid grid-cols-2 gap-2 text-center">
+              <div>
+                <div className="text-xs text-slate-400">จำนวนรายวิชา</div>
+                <div className="text-lg font-bold text-indigo-200">{courses.length} วิชายอดนิยม</div>
+              </div>
+              <div>
+                <div className="text-xs text-slate-400">บทบาทปัจจุบัน</div>
+                <div className="text-xs font-bold text-emerald-400 mt-1 capitalize">{role} mode</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>}
+
+      {/* 3a. BackOffice — full-width, outside container */}
+      {currentPage === 'admin-panel' && (
+        <BackOffice
+          courses={courses}
+          materials={materials}
+          assignments={assignments}
+          questions={questions}
+          replies={replies}
+          activities={activities}
+          visits={visits}
+          submissions={submissions}
+          students={allStudents}
+          onNavigateCourses={() => setCurrentPage('courses')}
+          onNavigateToCourse={handleBackOfficeNavigateToCourse}
+          onEditCourse={handleEditCourseFromBackOffice}
+          onAddCourse={handleAddCourseClick}
+        />
+      )}
+
+      {/* 3. Main Workspace Area */}
+      {currentPage !== 'admin-panel' && (
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-grow space-y-8 w-full" id="main-content">
+        {currentPage === 'dashboard' ? (
+          <DashboardPage
+            courses={courses}
+            materials={materials}
+            assignments={assignments}
+            questions={questions}
+            activities={activities}
+            replies={replies}
+            visits={visits}
+            allStudents={allStudents}
+            onNavigateCourses={() => setCurrentPage('courses')}
+            onSelectCourse={(id) => { setSelectedCourseId(id); setCurrentPage('courses'); }}
+          />
+        ) : currentPage === 'profile' ? (
+          <ProfilePage
+            role={role}
+            profile={siteProfile}
+            onBack={() => setCurrentPage('courses')}
+            onSave={handleSaveProfile}
+            onPasswordChange={handlePasswordChange}
+            onPhotoUpload={handlePhotoUpload}
+          />
+        ) : currentPage === 'student-profile' && studentProfile ? (
+          <StudentProfilePage
+            studentProfile={studentProfile}
+            courses={courses}
+            materials={materials}
+            assignments={assignments}
+            visits={visits}
+            submissions={submissions}
+            onUpdate={handleUpdateStudentProfile}
+            onLogout={handleStudentLogout}
+          />
+        ) : !selectedCourseId ? (
+          <>
+            {/* 3.1 Course list view */}
+            <div className="space-y-6">
+              {/* Filter Area */}
+              <SemesterSelector
+                selectedSemester={semester}
+                selectedYear={year}
+                yearsList={yearsList}
+                onChange={handleSemesterYearChange}
+              />
+
+              {/* Course block title and command controls */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
+                    <BookMarked size={20} className="text-indigo-600" />
+                    <span>หลักสูตรวิชาที่เปิดสอนในเทอมนี้</span>
+                    <span className="text-xs font-semibold bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full border border-indigo-100">
+                      {filteredCourses.length} รายการ
+                    </span>
+                  </h2>
+                  <p className="text-slate-500 text-xs mt-1">
+                    คลิกเลือกการ์ดวิชาเพื่อเข้าชมสไลด์และงานสำคัญของแต่ละวิชาอย่างเป็นทางการ
+                  </p>
+                </div>
+
+                {role === 'admin' && (
+                  <button
+                    onClick={handleAddCourseClick}
+                    className="flex items-center gap-1.5 text-xs text-white font-semibold px-4 py-2.5 rounded-xl bg-[#4F46E5] hover:bg-indigo-700 transition-all hover:scale-[1.02] active:scale-95 shadow-md shadow-indigo-100 cursor-pointer"
+                    id="add-course-btn"
+                  >
+                    <Plus size={14} />
+                    <span>เพิ่มคอร์สวิชาใหม่</span>
+                  </button>
+                )}
+              </div>
+
+              {filteredCourses.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {filteredCourses.map((course, index) => {
+                    const colors = getCourseColors(index);
+                    const courseMaterialsCount = materials.filter(m => m.course_id === course.course_id).length;
+                    const courseAssignmentsCount = assignments.filter(a => a.course_id === course.course_id).length;
+                    const isEnrolled = role === 'student' && studentProfile
+                      ? visits.some(v => v.student_id === studentProfile.id && v.course_id === course.course_id)
+                      : false;
+                    return (
+                      <div
+                        key={course.course_id}
+                        onClick={() => handleSelectCourse(course.course_id)}
+                        className={`group cursor-pointer rounded-[2rem] border-2 p-6 sm:p-7 transition-all duration-300 hover:-translate-y-2 hover:shadow-xl ${colors.bg} flex flex-col justify-between min-h-[260px] max-w-full`}
+                        id={`course-card-${course.course_code}`}
+                      >
+                        {/* Header card structure */}
+                        <div className="space-y-4">
+                          <div className="flex items-start justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-black uppercase tracking-widest opacity-60">
+                                COURSE ARCHIVE
+                              </span>
+                              {course.enrollment_code?.trim() && (
+                                <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-amber-700 bg-amber-100 border border-amber-200 px-1.5 py-0.5 rounded-full">
+                                  <KeyRound size={9} />
+                                  <span>มีรหัส</span>
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Actions toggle only for admin role */}
+                            {role === 'admin' && (
+                              <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                                <button
+                                  onClick={(e) => handleEditCourseClick(course, e)}
+                                  className="p-1.5 rounded-full bg-white/80 hover:bg-white text-slate-700 hover:text-indigo-600 transition-colors shadow-sm cursor-pointer"
+                                  title="แก้ไขคอร์สนี้"
+                                >
+                                  <Edit size={12} />
+                                </button>
+                                <button
+                                  onClick={(e) => handleDeleteCourse(course.course_id, e)}
+                                  className="p-1.5 rounded-full bg-white/80 hover:bg-white text-slate-700 hover:text-red-600 transition-colors shadow-sm cursor-pointer"
+                                  title="ลบคอร์สนี้"
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+
+                          <div>
+                            <h3 className={`text-4xl font-extrabold mt-1 mb-1 tracking-tighter ${colors.text}`}>
+                              {course.course_code}
+                            </h3>
+                            <h4 className="text-lg font-bold text-slate-800 tracking-tight line-clamp-1 group-hover:text-indigo-950 transition-colors">
+                              {course.course_name_th}
+                            </h4>
+                             <div className="text-xs font-semibold text-slate-500 tracking-normal line-clamp-1 italic mb-2">
+                               {course.course_name_en}
+                             </div>
+                             {(course.credit || course.section) && (
+                               <div className="flex flex-wrap items-center gap-2 mb-3" onClick={(e) => e.stopPropagation()}>
+                                 {course.credit && (
+                                   <span className="inline-flex items-center px-2 py-0.5 rounded-lg text-[10px] font-bold bg-white/70 text-slate-800 border border-black/5 shadow-sm">
+                                     หน่วยกิต: {course.credit}
+                                   </span>
+                                 )}
+                                 {course.section && (
+                                   <span className="inline-flex items-center px-2 py-0.5 rounded-lg text-[10px] font-bold bg-white/70 text-slate-800 border border-black/5 shadow-sm">
+                                     {parseInt(course.section, 10) || course.section} กลุ่ม
+                                   </span>
+                                 )}
+                               </div>
+                             )}
+                             <p className="text-xs text-slate-600 leading-relaxed font-normal line-clamp-2 md:line-clamp-3">
+                               {course.description}
+                             </p>
+                          </div>
+                        </div>
+
+                        {/* Footer statistics summary using Editorial design layout */}
+                        <div className={`mt-6 pt-4 border-t border-current/10 flex items-center justify-between text-xs font-bold ${colors.text}`}>
+                          <div className="flex gap-4 items-end">
+                            <div className="text-left">
+                              <span className="block text-lg font-black leading-none">{courseMaterialsCount}</span>
+                              <span className="text-[9px] uppercase font-bold opacity-60">เอกสาร</span>
+                            </div>
+                            <div className="text-left">
+                              <span className="block text-lg font-black leading-none">{courseAssignmentsCount}</span>
+                              <span className="text-[9px] uppercase font-bold opacity-60">งานมอบหมาย</span>
+                            </div>
+                            <div className="text-left pl-3 ml-1 border-l border-current/20">
+                              <span className="flex items-center gap-0.5 text-lg font-black leading-none">
+                                <Eye size={13} className="opacity-80" />
+                                <span>{course.views || 0}</span>
+                              </span>
+                              <span className="text-[9px] uppercase font-bold opacity-65">เข้าชม</span>
+                            </div>
+                          </div>
+
+                          {role === 'guest' ? (
+                            <span className="inline-flex items-center gap-1 text-xs font-black uppercase tracking-wider bg-current/10 px-3 py-1.5 rounded-full transition-transform group-hover:translate-x-1">
+                              <span>ลงชื่อเข้าเรียน</span>
+                              <ChevronRight size={14} />
+                            </span>
+                          ) : role === 'student' && isEnrolled ? (
+                            <span className="inline-flex items-center gap-1 text-xs font-black uppercase tracking-wider bg-current/10 px-3 py-1.5 rounded-full transition-transform group-hover:translate-x-1">
+                              <CheckCircle size={12} />
+                              <span>กดดูรายวิชา</span>
+                              <ChevronRight size={14} />
+                            </span>
+                          ) : role === 'student' ? (
+                            <span className="inline-flex items-center gap-0.5 text-xs font-black uppercase tracking-wider bg-current/10 px-3 py-1.5 rounded-full transition-transform group-hover:translate-x-1">
+                              <span>ลงชื่อเข้าเรียน</span>
+                              <ChevronRight size={14} />
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-0.5 text-xs font-black uppercase tracking-wider bg-current/10 px-3 py-1.5 rounded-full transition-transform group-hover:translate-x-1">
+                              <span>เข้าเรียน</span>
+                              <ChevronRight size={14} />
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="bg-white border border-slate-200 rounded-3xl p-12 text-center max-w-full space-y-4">
+                  <div className="w-16 h-16 rounded-2xl bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-400 mx-auto">
+                    <BookOpen size={28} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <h3 className="text-base font-bold text-slate-900">ไม่พบรายวิชาที่ค้นหา</h3>
+                    <p className="text-sm text-slate-500 max-w-md mx-auto leading-relaxed">
+                      ยังไม่มีหลักสูตรคอร์สเรียนเปิดสอนในภาคเรียนที่ {semester}/{year} นี้
+                      {courses.length > 0 ? ` (DB มี ${courses.length} วิชา แต่ต่างเทอม — ลองเปลี่ยนปี/เทอมด้านบน)` : role === 'admin' ? ' อาจารย์สามารถกดปุ่ม "เพิ่มคอร์สวิชาใหม่" เพื่อเพิ่มวิชาได้ทันที' : ' ตรวจสอบภาคการเรียนอื่นด้านบน'}
+                    </p>
+                    {dbError && (
+                      <p className="text-xs text-red-600 font-mono bg-red-50 border border-red-200 rounded-xl px-4 py-2 mt-2 text-left">
+                        ⚠ {dbError}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </>
+
+        ) : (
+          /* 3.2 DETAILED COURSE VIEW PORTAL */
+          <div className="space-y-6">
+            {/* Top Navigation Row */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <button
+                onClick={handleBackToList}
+                className="flex items-center gap-2 text-xs font-bold text-slate-600 hover:text-slate-900 transition-colors bg-white hover:bg-slate-100 border border-slate-200 px-4 py-2.5 rounded-xl shadow-sm"
+              >
+                <ArrowLeft size={14} />
+                <span>ย้อนกลับไป รายชื่อคอร์สทั้งหมด</span>
+              </button>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500 font-semibold">สถานะวิชา:</span>
+                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-100">
+                  ภาคการสอน {activeCourse?.semester_id}/{activeCourse?.year}
+                </span>
+              </div>
+            </div>
+
+            {activeCourse ? (
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                {/* Left Side: Banner / Quick course detail profile */}
+                <div className="lg:col-span-1 space-y-6">
+                  <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-6">
+                    {/* Visual header */}
+                    <div className="space-y-3 pb-5 border-b border-slate-100">
+                      <span className="inline-block text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 px-3 py-1 rounded-full">
+                        {activeCourse.course_code}
+                      </span>
+                      <h2 className="text-2xl font-black text-slate-950 tracking-tight leading-snug">
+                        {activeCourse.course_name_th}
+                      </h2>
+                      <div className="text-xs font-semibold text-slate-500 leading-normal italic">
+                        {activeCourse.course_name_en}
+                      </div>
+                    </div>
+
+                    {/* Course long description paragraph */}
+                    <div className="space-y-2">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">คำอธิบายรายวิชา (Description)</h4>
+                      <p className="text-xs text-slate-600 leading-relaxed font-normal">
+                        {activeCourse.description}
+                      </p>
+                    </div>
+
+                    {/* Meta quick checklist */}
+                    <div className="pt-2">
+                      <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 space-y-3">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-slate-500">รหัสเฉพาะคอร์ส</span>
+                          <span className="font-semibold text-slate-800">{activeCourse.course_id}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-slate-500">เทอมปีการจัดการ</span>
+                          <span className="font-semibold text-slate-800">{activeCourse.semester_id}/{activeCourse.year}</span>
+                        </div>
+                        {activeCourse.credit && (
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-slate-500">หน่วยกิต (Credit)</span>
+                            <span className="font-semibold text-slate-800">{activeCourse.credit}</span>
+                          </div>
+                        )}
+                        {activeCourse.section && (
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-slate-500">จำนวนกลุ่มสอน</span>
+                            <span className="font-semibold text-slate-800">{parseInt(activeCourse.section ?? '', 10) || activeCourse.section} กลุ่ม</span>
+                          </div>
+                        )}
+                        {((activeCourse.theory_hours ?? 0) > 0 || (activeCourse.practice_hours ?? 0) > 0) && (<>
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-slate-500">ทฤษฏี / ปฏิบัติ (ต่อสัปดาห์)</span>
+                            <span className="font-semibold text-slate-800">
+                              <span className="text-indigo-600">{activeCourse.theory_hours ?? 0}</span>
+                              {' / '}
+                              <span className="text-emerald-600">{activeCourse.practice_hours ?? 0}</span>
+                              {' ชม.'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-slate-500">รวมทั้งภาคเรียน</span>
+                            <span className="font-bold text-blue-700">
+                              {((activeCourse.theory_hours ?? 0) + (activeCourse.practice_hours ?? 0)) * (activeCourse.total_weeks ?? 15)} ชม.
+                              <span className="text-[10px] font-normal text-slate-400 ml-1">({activeCourse.total_weeks ?? 15} สัปดาห์)</span>
+                            </span>
+                          </div>
+                        </>)}
+                        <div className="flex items-center justify-between text-xs pt-2 border-t border-slate-200">
+                          <span className="text-slate-500">จำนวนการเข้าชมสื่อ</span>
+                          <span className="font-extrabold text-indigo-600 flex items-center gap-1 bg-indigo-50 px-2 py-0.5 rounded-lg border border-indigo-100/50">
+                            <Eye size={13} className="text-indigo-500" />
+                            <span>{activeCourse.views || 0} ครั้ง</span>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {role === 'admin' && (
+                      <button
+                        onClick={(e) => handleEditCourseClick(activeCourse, e)}
+                        className="w-full flex items-center justify-center gap-2 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-4 py-2.5 rounded-2xl transition-all"
+                      >
+                        <Edit size={13} />
+                        <span>แก้ไขข้อมูลรายวิชานี้</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Right Side: Primary Course Documents and Active assignments tabs */}
+                <div className="lg:col-span-2 space-y-6">
+                  {/* Tab bar — order: CLOs | Materials | Active Learning | Q&A | Assignments */}
+                  <div className="flex bg-slate-200/60 p-1.5 rounded-2xl border border-slate-200 overflow-x-auto gap-0.5">
+                    {([
+                      { key: 'info',            label: 'วัตถุประสงค์',   icon: <BookOpen size={14} />,    badge: null },
+                      { key: 'materials',       label: 'เอกสารประกอบ',   icon: <Layers size={14} />,     badge: activeCourseMaterials.length, badgeColor: 'bg-indigo-50 border-indigo-100 text-indigo-600' },
+                      { key: 'active_learning', label: 'Active Learning', icon: <Zap size={14} />,        badge: activeCourseActivities.length || null, badgeColor: 'bg-green-50 border-green-100 text-green-600' },
+                      { key: 'qa',              label: 'ถาม-ตอบ',         icon: <MessageCircle size={14} />, badge: activeCourseQuestions.length || null, badgeColor: 'bg-amber-50 border-amber-100 text-amber-600' },
+                      { key: 'assignments',     label: 'งานมอบหมาย',     icon: <FileText size={14} />,    badge: activeCourseAssignments.length, badgeColor: 'bg-pink-50 border-pink-100 text-pink-600' },
+                    ] as { key: string; label: string; icon: React.ReactNode; badge: number | null; badgeColor?: string }[]).map(tab => (
+                      <button
+                        key={tab.key}
+                        onClick={() => setCourseDetailTab(tab.key as 'info' | 'materials' | 'assignments' | 'qa' | 'active_learning' | 'reflection')}
+                        className={`flex-1 flex items-center justify-center gap-1.5 text-xs font-bold py-2.5 px-1 rounded-xl transition duration-150 whitespace-nowrap min-w-fit ${
+                          courseDetailTab === tab.key
+                            ? 'bg-white text-indigo-700 shadow-sm'
+                            : 'text-slate-600 hover:text-slate-900 hover:bg-white/40'
+                        }`}
+                      >
+                        {tab.icon}
+                        <span>{tab.label}</span>
+                        {tab.badge ? (
+                          <span className={`text-[9px] font-semibold border px-1.5 py-0.5 rounded-full ${tab.badgeColor}`}>
+                            {tab.badge}
+                          </span>
+                        ) : null}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* TAB OUTPUT VIEWS */}
+                  {courseDetailTab === 'info' && (
+                    <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-6">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-base font-bold text-slate-950 flex items-center gap-2">
+                          <CheckCircle size={18} className="text-emerald-500" />
+                          <span>วัตถุประสงค์รายวิชา / CLOs (Course Learning Outcomes)</span>
+                        </h3>
+                      </div>
+
+                      {activeCourse.objectives && activeCourse.objectives.length > 0 ? (
+                        <div className="space-y-3.5">
+                          {activeCourse.objectives.map((obj, i) => (
+                            <div key={i} className="flex gap-3 items-start border-l-2 border-indigo-100 pl-4 py-1.5 bg-slate-50/50 rounded-r-2xl pr-3 hover:bg-indigo-50/20 hover:border-indigo-300 transition-colors duration-150">
+                              <span className="text-xs font-extrabold text-indigo-600 mt-0.5 min-w-[20px]">
+                                CLO{i + 1}
+                              </span>
+                              <p className="text-xs text-slate-700 leading-relaxed">
+                                {obj}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-500 italic">ไม่ได้กำหนดวัตถุประสงค์รายวิชาไว้ในฐานข้อมูล</p>
+                      )}
+                    </div>
+                  )}
+
+                  {courseDetailTab === 'materials' && (
+                    <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-6">
+                      {/* Section Title & Admin Controls */}
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h3 className="text-base font-bold text-slate-950">คลังสไลด์และเอกสารประกอบการสอน</h3>
+                          <p className="text-slate-500 text-[11px]">เอกสารการเรียนแยกตามสัปดาห์</p>
+                        </div>
+
+                        {role === 'admin' && (
+                          <button
+                            onClick={() => setShowMaterialModal(true)}
+                            className="flex items-center gap-1 text-xs text-indigo-600 bg-indigo-50 border border-indigo-100 hover:bg-indigo-100 font-bold px-3 py-1.5 rounded-xl transition-all"
+                            id="add-material-btn"
+                          >
+                            <Plus size={14} />
+                            <span>อัปโหลดงานเอกสารเพิ่ม</span>
+                          </button>
+                        )}
+                      </div>
+
+                      {activeCourseMaterials.length > 0 ? (
+                        <div className="space-y-4">
+                          {activeCourseMaterials
+                            .sort((a, b) => (a.week_number || 0) - (b.week_number || 0))
+                            .map((mat) => {
+                              // Choose Icon based on Type
+                              const getMatIcon = (type: MaterialType) => {
+                                switch (type) {
+                                  case 'slides': return <Presentation size={18} className="text-amber-500" />;
+                                  case 'video': return <Video size={18} className="text-rose-500" />;
+                                  case 'document': return <FileText size={18} className="text-blue-500" />;
+                                  case 'link': return <ExternalLink size={18} className="text-indigo-500" />;
+                                  default: return <BookOpen size={18} className="text-slate-500" />;
+                                }
+                              };
+
+                              return (
+                                <div
+                                  key={mat.material_id}
+                                  className="group border border-slate-200 hover:border-slate-300 rounded-2xl p-4 flex items-center justify-between gap-4 transition duration-150 bg-slate-50/40 hover:bg-slate-50"
+                                >
+                                  <div className="flex items-start gap-3">
+                                    <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center shrink-0 border border-slate-100 shadow-sm">
+                                      {getMatIcon(mat.type)}
+                                    </div>
+                                    <div>
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        {mat.week_number && (
+                                          <span className="text-[10px] uppercase tracking-wider font-bold text-slate-500 bg-slate-100 border border-slate-200/60 px-2 py-0.5 rounded-md">
+                                            สัปดาห์ที่ {mat.week_number}
+                                          </span>
+                                        )}
+                                        <span className="text-[10px] font-semibold text-slate-500 px-1.5 py-0.5 bg-slate-100/50 border border-slate-100 rounded">
+                                          {mat.type}
+                                        </span>
+                                      </div>
+                                      <h4 className="text-xs font-bold text-slate-800 tracking-tight mt-1 group-hover:text-indigo-600 transition-colors line-clamp-1">
+                                        {mat.title}
+                                      </h4>
+                                      {mat.description && (
+                                        <p className="text-[11px] text-slate-500 mt-1 line-clamp-1 font-normal leading-relaxed">
+                                          {mat.description}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    {/* Action links */}
+                                    <a
+                                      href={mat.file_url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="flex items-center gap-1 text-[11px] font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-3 py-2 rounded-xl border border-indigo-100/50 transition duration-150"
+                                    >
+                                      <span>เปิดลิงก์</span>
+                                      <ExternalLink size={12} />
+                                    </a>
+
+                                    {/* Only admin edit/delete */}
+                                    {role === 'admin' && (
+                                      <>
+                                        <button
+                                          onClick={() => handleEditMaterialClick(mat)}
+                                          className="p-2 rounded-xl text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition duration-150"
+                                          title="แก้ไขเอกสารนี้"
+                                        >
+                                          <Edit size={14} />
+                                        </button>
+                                        <button
+                                          onClick={() => handleDeleteMaterial(mat.material_id)}
+                                          className="p-2 rounded-xl text-slate-400 hover:text-red-500 hover:bg-red-50 transition duration-150"
+                                          title="ลบเอกสารการสอนนี้"
+                                        >
+                                          <Trash2 size={14} />
+                                        </button>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                        </div>
+                      ) : (
+                        <div className="border border-dashed border-slate-200 rounded-3xl p-10 text-center text-slate-400 max-w-full space-y-2">
+                          <Layers size={24} className="mx-auto" />
+                          <div className="text-xs">สัปดาห์นี้และห้องเรียนนี้ยังไม่ได้สร้างเอกสารการเรียนประกอบ</div>
+                        </div>
+                      )}
+
+                      {/* บันทึกการสอน — admin only, เป็นส่วนล่างของ Materials tab */}
+                      {role === 'admin' && (
+                        <div className="pt-4 border-t border-slate-100 space-y-4">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <NotebookPen size={15} className="text-purple-500" />
+                              <div>
+                                <h4 className="text-sm font-bold text-slate-900">บันทึกการสอน</h4>
+                                <p className="text-[11px] text-slate-500">บันทึกประจำสัปดาห์ — มองเห็นเฉพาะอาจารย์</p>
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => { setEditingReflection(null); setReflectionForm({ week_number: activeCourseReflections.length + 1, content: '', image_url: '' }); setShowReflectionModal(true); }}
+                              className="flex items-center gap-1.5 text-xs font-bold text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-3 py-1.5 rounded-xl transition-all"
+                            >
+                              <Plus size={13} />
+                              <span>เพิ่มบันทึก</span>
+                            </button>
+                          </div>
+
+                          {activeCourseReflections.length > 0 ? (
+                            <div className="space-y-3">
+                              {activeCourseReflections.map((ref: TeachingReflection) => (
+                                <div key={ref.reflection_id} className="border border-purple-100 bg-purple-50/30 rounded-2xl p-4 space-y-2">
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-[10px] font-black text-purple-700 bg-purple-100 border border-purple-200 px-2.5 py-1 rounded-lg">
+                                        สัปดาห์ที่ {ref.week_number}
+                                      </span>
+                                      {ref.created_at && (
+                                        <span className="text-[10px] text-slate-400">
+                                          {new Date(ref.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      <button onClick={() => handleEditReflectionClick(ref)} className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"><Edit size={12} /></button>
+                                      <button onClick={() => handleDeleteReflection(ref.reflection_id)} className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition"><Trash2 size={12} /></button>
+                                    </div>
+                                  </div>
+                                  <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">{ref.content}</p>
+                                  {ref.image_url && (
+                                    <img
+                                      src={ref.image_url}
+                                      alt={`บันทึกสัปดาห์ที่ ${ref.week_number}`}
+                                      className="mt-2 w-full max-h-64 object-cover rounded-xl border border-purple-100 cursor-pointer"
+                                      onClick={() => window.open(ref.image_url, '_blank')}
+                                    />
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="border border-dashed border-purple-200 rounded-2xl p-6 text-center text-slate-400 space-y-1.5">
+                              <NotebookPen size={20} className="mx-auto text-purple-300" />
+                              <div className="text-xs">ยังไม่มีบันทึก กด "เพิ่มบันทึก" เพื่อเริ่มต้น</div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                    </div>
+                  )}
+
+                  {courseDetailTab === 'qa' && (
+                    <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-6">
+                      {/* Header */}
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h3 className="text-base font-bold text-slate-950 flex items-center gap-2">
+                            <MessageCircle size={17} className="text-amber-500" />
+                            <span>กระดานถาม-ตอบ</span>
+                          </h3>
+                          <p className="text-slate-500 text-[11px] mt-0.5">ตั้งกระทู้คำถาม และตอบกลับได้หลายครั้ง</p>
+                        </div>
+                        <button
+                          onClick={() => {
+                            setShowQuestionForm(v => !v);
+                            const studentName = studentProfile ? `${studentProfile.first_name} ${studentProfile.last_name}`.trim() : '';
+                            setQuestionForm({ author_name: studentName, content: '' });
+                            setReplyTargetId(null);
+                          }}
+                          className="flex items-center gap-1.5 text-xs font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-3 py-1.5 rounded-xl transition-all"
+                        >
+                          <Plus size={14} />
+                          <span>ตั้งกระทู้ใหม่</span>
+                        </button>
+                      </div>
+
+                      {/* New question form */}
+                      {showQuestionForm && (
+                        <form onSubmit={handlePostQuestion} className="bg-amber-50/60 border border-amber-200 rounded-2xl p-4 space-y-3">
+                          <p className="text-xs font-bold text-amber-800">ตั้งกระทู้ใหม่</p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                              <label className="block text-[11px] font-semibold text-slate-600">ชื่อผู้ถาม *</label>
+                              <input
+                                type="text"
+                                required
+                                value={questionForm.author_name}
+                                onChange={e => setQuestionForm(f => ({ ...f, author_name: e.target.value }))}
+                                placeholder="ชื่อ-นามสกุล หรือรหัสนักศึกษา"
+                                className="w-full text-xs text-slate-900 border border-amber-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-amber-400 focus:outline-none bg-white"
+                              />
+                            </div>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="block text-[11px] font-semibold text-slate-600">คำถาม / เนื้อหากระทู้ *</label>
+                            <textarea
+                              required
+                              rows={3}
+                              value={questionForm.content}
+                              onChange={e => setQuestionForm(f => ({ ...f, content: e.target.value }))}
+                              placeholder="พิมพ์คำถามหรือหัวข้อที่ต้องการพูดคุย..."
+                              className="w-full text-xs text-slate-900 border border-amber-200 rounded-xl p-3 focus:ring-2 focus:ring-amber-400 focus:outline-none bg-white leading-relaxed"
+                            />
+                          </div>
+                          <div className="flex items-center justify-end gap-2">
+                            <button type="button" onClick={() => setShowQuestionForm(false)} className="text-xs text-slate-500 hover:text-slate-800 font-medium px-3 py-1.5 rounded-xl hover:bg-slate-100 transition">ยกเลิก</button>
+                            <button type="submit" className="flex items-center gap-1.5 text-xs font-bold text-white bg-amber-500 hover:bg-amber-600 px-4 py-2 rounded-xl transition">
+                              <Send size={12} />
+                              <span>ตั้งกระทู้</span>
+                            </button>
+                          </div>
+                        </form>
+                      )}
+
+                      {/* Thread list */}
+                      {activeCourseQuestions.length > 0 ? (
+                        <div className="space-y-5">
+                          {activeCourseQuestions.map((q: Question) => {
+                            const threadReplies = replies.filter((r: Reply) => r.question_id === q.question_id);
+                            return (
+                              <div key={q.question_id} className="border border-slate-200 rounded-2xl overflow-hidden">
+                                {/* Question / OP */}
+                                <div className="p-4 bg-slate-50/40">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <div className="w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center shrink-0 text-amber-600 font-black text-[10px]">Q</div>
+                                      <span className="text-xs font-bold text-slate-800 truncate">{q.author_name}</span>
+                                      {q.created_at && (
+                                        <span className="text-[10px] text-slate-400 shrink-0">
+                                          {new Date(q.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })}
+                                        </span>
+                                      )}
+                                    </div>
+                                    {role === 'admin' && (
+                                      <button onClick={() => handleDeleteQuestion(q.question_id)} className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition shrink-0" title="ลบกระทู้">
+                                        <Trash2 size={13} />
+                                      </button>
+                                    )}
+                                  </div>
+                                  <p className="text-xs text-slate-800 leading-relaxed mt-2 pl-9">{q.content}</p>
+                                  {threadReplies.length > 0 && (
+                                    <p className="text-[10px] text-slate-400 mt-2 pl-9">{threadReplies.length} การตอบกลับ</p>
+                                  )}
+                                </div>
+
+                                {/* Replies */}
+                                {threadReplies.length > 0 && (
+                                  <div className="divide-y divide-slate-100">
+                                    {threadReplies.map((r: Reply) => (
+                                      <div key={r.reply_id} className={`px-4 py-3 flex items-start gap-3 ${r.is_instructor ? 'bg-indigo-50/40' : 'bg-white'}`}>
+                                        <div className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 text-[10px] font-black mt-0.5 ${r.is_instructor ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'}`}>
+                                          {r.is_instructor ? 'อ' : r.author_name.charAt(0).toUpperCase()}
+                                        </div>
+                                        <div className="flex-1 min-w-0 space-y-1">
+                                          <div className="flex items-center gap-2 flex-wrap">
+                                            <span className="text-xs font-bold text-slate-800">{r.author_name}</span>
+                                            {r.is_instructor && (
+                                              <span className="text-[9px] font-bold text-indigo-700 bg-indigo-100 px-1.5 py-0.5 rounded-full border border-indigo-200">อาจารย์</span>
+                                            )}
+                                            {r.created_at && (
+                                              <span className="text-[10px] text-slate-400">
+                                                {new Date(r.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })}
+                                              </span>
+                                            )}
+                                          </div>
+                                          <p className="text-xs text-slate-700 leading-relaxed">{r.content}</p>
+                                        </div>
+                                        {role === 'admin' && (
+                                          <button onClick={() => handleDeleteReply(r.reply_id)} className="p-1 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition shrink-0 mt-0.5" title="ลบการตอบกลับ">
+                                            <Trash2 size={12} />
+                                          </button>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {/* Reply form (inline, toggles per question) */}
+                                {replyTargetId === q.question_id ? (
+                                  <form onSubmit={handlePostReply} className="border-t border-slate-200 p-4 bg-slate-50/50 space-y-3">
+                                    <p className="text-[11px] font-bold text-slate-600">ตอบกระทู้นี้</p>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                      <div className="space-y-1">
+                                        <label className="block text-[11px] font-semibold text-slate-500">ชื่อผู้ตอบ *</label>
+                                        <input
+                                          type="text"
+                                          required
+                                          value={replyForm.author_name}
+                                          onChange={e => setReplyForm(f => ({ ...f, author_name: e.target.value }))}
+                                          placeholder={role === 'admin' ? 'ชื่ออาจารย์' : 'ชื่อ-นามสกุล'}
+                                          className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white"
+                                        />
+                                      </div>
+                                    </div>
+                                    <div className="space-y-1">
+                                      <label className="block text-[11px] font-semibold text-slate-500">ข้อความ *</label>
+                                      <textarea
+                                        required
+                                        rows={3}
+                                        value={replyForm.content}
+                                        onChange={e => setReplyForm(f => ({ ...f, content: e.target.value }))}
+                                        placeholder="พิมพ์การตอบกลับ..."
+                                        className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl p-3 focus:ring-2 focus:ring-indigo-500 focus:outline-none leading-relaxed"
+                                      />
+                                    </div>
+                                    <div className="flex items-center justify-end gap-2">
+                                      <button type="button" onClick={() => { setReplyTargetId(null); setReplyForm({ author_name: '', content: '' }); }} className="text-xs text-slate-500 hover:text-slate-800 font-medium px-3 py-1.5 rounded-xl hover:bg-slate-100 transition">ยกเลิก</button>
+                                      <button type="submit" className="flex items-center gap-1.5 text-xs font-bold text-white bg-[#4F46E5] hover:bg-indigo-700 px-4 py-2 rounded-xl transition">
+                                        <Send size={12} />
+                                        <span>ส่งการตอบกลับ</span>
+                                      </button>
+                                    </div>
+                                  </form>
+                                ) : (
+                                  <div className="border-t border-slate-100 px-4 py-2.5">
+                                    <button
+                                      onClick={() => { setReplyTargetId(q.question_id); setReplyForm({ author_name: role === 'admin' ? siteProfile.profile_name : '', content: '' }); setShowQuestionForm(false); }}
+                                      className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-indigo-600 transition"
+                                    >
+                                      <MessageCircle size={13} />
+                                      <span>ตอบกระทู้นี้</span>
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="border border-dashed border-slate-200 rounded-3xl p-10 text-center text-slate-400 space-y-2">
+                          <MessageCircle size={24} className="mx-auto" />
+                          <div className="text-xs">ยังไม่มีกระทู้ในรายวิชานี้ กด "ตั้งกระทู้ใหม่" เพื่อเริ่มต้น</div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {courseDetailTab === 'assignments' && (
+                    <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-6">
+                      {/* Header layout */}
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h3 className="text-base font-bold text-slate-950">แบบฝึกหัดและการส่งงาน (Assignments)</h3>
+                          <p className="text-slate-500 text-[11px]">ติดตามตารางเวลาส่งงานและการประเมินของนักศึกษา</p>
+                        </div>
+
+                        {role === 'admin' && (
+                          <button
+                            onClick={() => setShowAssignmentModal(true)}
+                            className="flex items-center gap-1 text-xs text-pink-600 bg-pink-50 border border-pink-100 hover:bg-pink-100 font-bold px-3 py-1.5 rounded-xl transition-all"
+                            id="add-assignment-btn"
+                          >
+                            <Plus size={14} />
+                            <span>สั่งงานมอบเพิ่ม</span>
+                          </button>
+                        )}
+                      </div>
+
+                      {activeCourseAssignments.length > 0 ? (
+                        <div className="space-y-4">
+                          {activeCourseAssignments.map((assign) => {
+                            // Render nice badge from status: 'open' | 'closed' | 'upcoming'
+                            const getStatusBadge = (status: AssignmentStatus) => {
+                              switch (status) {
+                                case 'open':
+                                  return (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-lg">
+                                      <CheckCircle size={10} />
+                                      <span>เปิดรับงาน (Open)</span>
+                                    </span>
+                                  );
+                                case 'upcoming':
+                                  return (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-800 bg-indigo-50 border border-indigo-100 px-2.5 py-1 rounded-lg">
+                                      <Clock size={10} />
+                                      <span>เร็วๆ นี้ (Upcoming)</span>
+                                    </span>
+                                  );
+                                case 'closed':
+                                  return (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-red-800 bg-red-50 border border-red-100 px-2.5 py-1 rounded-lg">
+                                      <AlertCircle size={10} />
+                                      <span>หมดเวลาแล้ว (Closed)</span>
+                                    </span>
+                                  );
+                                default:
+                                  return null;
+                              }
+                            };
+
+                            return (
+                              <div
+                                key={assign.assignment_id}
+                                className="border border-slate-200 rounded-2xl p-4 sm:p-5 flex flex-col justify-between gap-4 bg-white hover:border-slate-300 transition duration-150 shadow-sm"
+                              >
+                                <div className="space-y-2.5">
+                                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+                                    {getStatusBadge(assign.status)}
+                                    
+                                    <div className="flex items-center gap-1 text-xs text-slate-500 font-medium">
+                                      <Clock size={12} />
+                                      <span>กำหนดส่ง: <b className="text-slate-800 font-semibold">{assign.due_date}</b></span>
+                                    </div>
+                                  </div>
+
+                                  <div className="space-y-1.5">
+                                    <h4 className="text-xs font-extrabold text-slate-900 tracking-tight leading-tight">
+                                      {assign.title}
+                                    </h4>
+                                    <p className="text-[11px] text-slate-600 leading-relaxed font-normal">
+                                      {assign.description}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs font-semibold">
+                                  {assign.attachment_url ? (
+                                    <a
+                                      href={assign.attachment_url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1 text-[11px] font-bold text-pink-700 bg-pink-50 hover:bg-pink-100 px-3 py-1.5 rounded-lg border border-pink-100/50 transition"
+                                    >
+                                      <Paperclip size={12} />
+                                      <span>ดาวน์โหลดโจทย์งาน</span>
+                                    </a>
+                                  ) : (
+                                    <span className="text-[10px] text-slate-400 italic">ไม่มีไฟล์แนบแนบไว้</span>
+                                  )}
+
+                                  {role === 'admin' && (
+                                    <div className="flex items-center gap-1.5">
+                                      <button
+                                        onClick={() => handleEditAssignmentClick(assign)}
+                                        className="flex items-center gap-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 px-2 py-1.5 rounded-lg transition"
+                                        title="แก้ไขงานมอบหมายนี้"
+                                      >
+                                        <Edit size={13} />
+                                        <span className="text-[11px]">แก้ไข</span>
+                                      </button>
+                                      <button
+                                        onClick={() => handleDeleteAssignment(assign.assignment_id)}
+                                        className="flex items-center gap-1 text-slate-400 hover:text-red-500 hover:bg-red-50 px-2 py-1.5 rounded-lg transition"
+                                        title="ลบงานมอบหมายนี้"
+                                      >
+                                        <Trash2 size={13} />
+                                        <span className="text-[11px]">ลบงานนี้</span>
+                                      </button>
+                                    </div>
+                                  )}
+                                  {/* Student submit button */}
+                                  {role === 'student' && studentProfile && (() => {
+                                    const alreadySubmitted = submissions.some(
+                                      s => s.student_id === studentProfile.id && s.assignment_id === assign.assignment_id
+                                    );
+                                    return alreadySubmitted ? (
+                                      <div className="flex items-center gap-1.5 mt-2 text-emerald-600 text-xs font-semibold">
+                                        <CheckCircle size={13} />
+                                        <span>ส่งงานแล้ว</span>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        onClick={async () => {
+                                          if (!selectedCourseId) return;
+                                          const submission_id = `sub-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+                                          const newSub: AssignmentSubmission = {
+                                            submission_id,
+                                            student_id: studentProfile.id,
+                                            assignment_id: assign.assignment_id,
+                                            course_id: selectedCourseId,
+                                            submitted_at: new Date().toISOString(),
+                                          };
+                                          const { error } = await supabase.from('assignment_submissions').insert(newSub);
+                                          if (!error) setSubmissions(prev => [newSub, ...prev]);
+                                        }}
+                                        className="mt-2 flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg transition"
+                                      >
+                                        <Send size={11} />
+                                        ส่งงาน
+                                      </button>
+                                    );
+                                  })()}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="border border-dashed border-slate-200 rounded-3xl p-10 text-center text-slate-400 max-w-full space-y-2">
+                          <FileText size={24} className="mx-auto" />
+                          <div className="text-xs">ยังไม่มีงานมอบหมายหรือการทดสอบใด ๆ ในคอร์สนี้</div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {/* Active Learning Tab */}
+                  {courseDetailTab === 'active_learning' && (
+                    <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-6">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h3 className="text-base font-bold text-slate-950 flex items-center gap-2">
+                            <Zap size={17} className="text-green-500" />
+                            <span>กิจกรรม Active Learning</span>
+                          </h3>
+                          <p className="text-slate-500 text-[11px] mt-0.5">กิจกรรมเสริมการเรียนรู้เชิงรุกในรายวิชา</p>
+                        </div>
+                        {role === 'admin' && (
+                          <button
+                            onClick={() => { setEditingActivity(null); setActivityForm({ type_id: '', title: '', description: '', duration: '' }); setShowActivityModal(true); }}
+                            className="flex items-center gap-1.5 text-xs font-bold text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 px-3 py-1.5 rounded-xl transition-all"
+                          >
+                            <Plus size={14} />
+                            <span>เพิ่มกิจกรรม</span>
+                          </button>
+                        )}
+                      </div>
+                      {activeCourseActivities.length > 0 ? (
+                        <div className="space-y-4">
+                          {activeCourseActivities.map((act: ActiveLearning) => (
+                            <div key={act.activity_id} className="border border-slate-200 rounded-2xl p-4 space-y-2 hover:border-green-200 transition-colors">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <div className="w-7 h-7 rounded-lg bg-green-100 flex items-center justify-center shrink-0">
+                                    <Zap size={13} className="text-green-600" />
+                                  </div>
+                                  <h4 className="text-xs font-bold text-slate-900 truncate">{act.title}</h4>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  {act.duration && (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-600 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-lg">
+                                      <Timer size={10} />
+                                      {act.duration}
+                                    </span>
+                                  )}
+                                  {role === 'admin' && (
+                                    <>
+                                      <button onClick={() => handleEditActivityClick(act)} className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"><Edit size={13} /></button>
+                                      <button onClick={() => handleDeleteActivity(act.activity_id)} className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition"><Trash2 size={13} /></button>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                              {act.description && <p className="text-xs text-slate-600 leading-relaxed pl-9">{act.description}</p>}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="border border-dashed border-slate-200 rounded-3xl p-10 text-center text-slate-400 space-y-2">
+                          <Zap size={24} className="mx-auto" />
+                          <div className="text-xs">ยังไม่มีกิจกรรม Active Learning ในรายวิชานี้</div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                </div>
+              </div>
+            ) : (
+              <p className="text-slate-500 italic">กำลังดึงข้อมูลสาระการสอนวิชา...</p>
+            )}
+          </div>
+        )}
+      </main>
+      )} {/* end currentPage !== 'admin-panel' */}
+
+      {/* 4. Footer Component */}
+      <Footer
+        name={siteProfile.profile_name}
+        title={siteProfile.profile_title}
+        department={siteProfile.profile_department}
+        faculty={siteProfile.profile_faculty}
+        university={siteProfile.profile_university}
+        bio={siteProfile.profile_bio}
+      />
+
+      {/* ========================================================== */}
+      {/* 5. MODAL INTERFACES */}
+
+      {/* 5.1 Admin Authentication Modal Dialog  */}
+      {showLoginModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-3xl border border-slate-200 shadow-xl overflow-hidden animate-in fade-in zoom-in duration-150">
+            {/* Header Dialog */}
+            <div className="bg-slate-900 text-white p-5 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-indigo-500 flex items-center justify-center text-white font-bold">
+                  <Lock size={15} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold">เข้าสู่ระบบผู้ดูแลระบบ (Admin)</h3>
+                  <p className="text-[9px] text-slate-400 font-medium">{siteProfile.profile_name} เท่านั้น</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => { setShowLoginModal(false); setLoginError(''); }}
+                className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white transition"
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            {/* Form Dialog Body */}
+            <div className="p-6 space-y-4">
+              <p className="text-xs text-slate-600 leading-relaxed font-normal">
+                เพื่อเข้าสู่โหมดแก้ไขข้อมูลคอร์สวิชา, ลบและแก้ไขข้อมูลเอกสาร/งานมอบหมาย ให้กรอกรหัสผู้ใช้เพื่อความปลอดภัยในระบบ
+              </p>
+
+              <div className="space-y-1.5">
+                <label className="block text-xs font-semibold text-slate-700">พิมพ์รหัสผ่านเพื่อจำลองบทบาท</label>
+                <input
+                  type="password"
+                  value={adminPassword}
+                  onChange={(e) => setAdminPassword(e.target.value)}
+                  placeholder="กรอกรหัสผ่าน Admin"
+                  className="w-full text-xs font-bold border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-slate-900"
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleAdminLogin(); }}
+                />
+                <span className="text-[10px] text-slate-400 mt-1 block">💡 รหัสผ่านเริ่มต้น: <b>admin123</b> (เปลี่ยนได้ในหน้า BackOffice)</span>
+              </div>
+
+              {loginError && (
+                <div className="bg-red-50 text-red-800 text-[11px] font-bold border border-red-100 p-3 rounded-lg flex items-center gap-1.5">
+                  <AlertCircle size={14} className="shrink-0" />
+                  <span>{loginError}</span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => { setShowLoginModal(false); setLoginError(''); }}
+                  className="text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-medium px-4 py-2.5 rounded-xl transition"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAdminLogin}
+                  className="text-xs text-white bg-[#4F46E5] hover:bg-indigo-700 font-bold px-5 py-2.5 rounded-xl transition"
+                >
+                  ยืนยันตัวตน
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5.1b Student Auth Modal */}
+      {showStudentAuthModal && (
+        <StudentAuthModal
+          initialTab={studentAuthInitialTab}
+          onClose={() => {
+            setShowStudentAuthModal(false);
+            setPendingCourseId(null);
+            pendingCourseIdRef.current = null;
+          }}
+        />
+      )}
+
+      {/* 5.1c Enrollment Code Gate Modal */}
+      {showEnrollCodeModal && pendingEnrollCourseId && (() => {
+        const gateCourse = courses.find(c => c.course_id === pendingEnrollCourseId);
+        return (
+          <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+              {/* Header */}
+              <div className="bg-gradient-to-br from-amber-500 to-orange-500 text-white px-6 pt-8 pb-6 text-center">
+                <div className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center mx-auto mb-3">
+                  <ShieldCheck size={28} />
+                </div>
+                <h2 className="text-base font-extrabold">ยืนยันรหัสลงทะเบียน</h2>
+                <p className="text-xs text-white/80 mt-1 font-medium">
+                  {gateCourse?.course_code} — {gateCourse?.course_name_th}
+                </p>
+              </div>
+
+              {/* Body */}
+              <form onSubmit={handleEnrollCodeSubmit} className="p-6 space-y-4">
+                <p className="text-xs text-slate-600 text-center leading-relaxed">
+                  วิชานี้ต้องใช้รหัสลงทะเบียน<br />
+                  กรุณาติดต่ออาจารย์เพื่อขอรหัส
+                </p>
+
+                <div className="relative">
+                  <input
+                    type={showEnrollCodePassword ? 'text' : 'password'}
+                    value={enrollCodeInput}
+                    onChange={(e) => { setEnrollCodeInput(e.target.value); setEnrollCodeError(''); }}
+                    placeholder="กรอกรหัสลงทะเบียน"
+                    autoFocus
+                    className="w-full text-sm text-slate-900 border-2 border-slate-200 rounded-2xl px-4 py-3 pr-10 focus:ring-2 focus:ring-amber-400 focus:border-amber-400 focus:outline-none font-mono tracking-widest text-center"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowEnrollCodePassword(p => !p)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    {showEnrollCodePassword ? <EyeOff size={15} /> : <EyeIcon size={15} />}
+                  </button>
+                </div>
+
+                {enrollCodeError && (
+                  <p className="text-xs text-red-600 text-center font-semibold bg-red-50 rounded-xl py-2 px-3">
+                    {enrollCodeError}
+                  </p>
+                )}
+
+                <div className="flex gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => { setShowEnrollCodeModal(false); setEnrollCodeInput(''); setEnrollCodeError(''); setPendingEnrollCourseId(null); }}
+                    className="flex-1 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 py-3 rounded-2xl transition"
+                  >
+                    ยกเลิก
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={!enrollCodeInput.trim()}
+                    className="flex-1 text-xs font-bold text-white bg-amber-500 hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed py-3 rounded-2xl transition"
+                  >
+                    ยืนยันเข้าวิชา
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* 5.2 Course Create/Update Modal Form */}
+      {showCourseModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white w-full max-w-lg rounded-3xl border border-slate-200 shadow-xl overflow-hidden my-8 animate-in fade-in zoom-in duration-150">
+            {/* Header form modal */}
+            <div className="bg-[#4F46E5] text-white p-5 flex items-center justify-between">
+              <h3 className="text-sm font-bold">
+                {editingCourse ? `แก้ไขข้อมูลคอร์ส: ${editingCourse.course_code}` : 'เพิ่มรายวิชาใหม่เข้าระบบ'}
+              </h3>
+              <button
+                onClick={() => { setShowCourseModal(false); setCourseFormError(''); }}
+                className="p-1.5 rounded-lg hover:bg-white/10 text-white/80 hover:text-white transition"
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            {/* Custom inputs */}
+            <form onSubmit={handleSaveCourse} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+
+              {courseFormError && (
+                <div className="bg-red-50 border border-red-200 text-red-700 text-xs font-semibold px-4 py-3 rounded-xl flex items-center gap-2">
+                  <AlertCircle size={14} className="shrink-0" />
+                  {courseFormError}
+                </div>
+              )}
+
+              {/* รหัสวิชา + กลุ่มเรียน */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label htmlFor="course-code" className="block text-xs font-semibold text-slate-700">รหัสวิชา *</label>
+                  <input
+                    id="course-code"
+                    type="text"
+                    value={courseForm.course_code}
+                    onChange={(e) => { setCourseForm({ ...courseForm, course_code: e.target.value }); setCourseFormError(''); }}
+                    placeholder="เช่น 928-221"
+                    className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label htmlFor="course-section" className="block text-xs font-semibold text-slate-700">จำนวนกลุ่มสอน</label>
+                  <input
+                    id="course-section"
+                    type="text"
+                    value={courseForm.section}
+                    onChange={(e) => setCourseForm({ ...courseForm, section: e.target.value })}
+                    placeholder="เช่น 1, 2, 3"
+                    className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* ชั่วโมงทฤษฏี + ชั่วโมงปฏิบัติ + จำนวนสัปดาห์ */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-indigo-700">ทฤษฏี (ชม./สัปดาห์)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.5}
+                    value={courseForm.theory_hours}
+                    onChange={(e) => setCourseForm({ ...courseForm, theory_hours: Number(e.target.value) })}
+                    className="w-full text-xs text-slate-900 border border-indigo-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-emerald-700">ปฏิบัติ (ชม./สัปดาห์)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.5}
+                    value={courseForm.practice_hours}
+                    onChange={(e) => setCourseForm({ ...courseForm, practice_hours: Number(e.target.value) })}
+                    className="w-full text-xs text-slate-900 border border-emerald-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-slate-700">จำนวนสัปดาห์</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={courseForm.total_weeks}
+                    onChange={(e) => setCourseForm({ ...courseForm, total_weeks: Number(e.target.value) })}
+                    className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+              {(courseForm.theory_hours > 0 || courseForm.practice_hours > 0) && (
+                <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-2.5 flex items-center justify-between text-xs">
+                  <span className="text-slate-600">รวมทั้งภาคเรียน ({courseForm.total_weeks} สัปดาห์):</span>
+                  <span className="font-black text-blue-700">
+                    {(courseForm.theory_hours + courseForm.practice_hours) * courseForm.total_weeks} ชม.
+                    <span className="font-normal text-slate-500 ml-1">
+                      (ทฤษฏี {courseForm.theory_hours * courseForm.total_weeks} + ปฏิบัติ {courseForm.practice_hours * courseForm.total_weeks})
+                    </span>
+                  </span>
+                </div>
+              )}
+
+              {/* ภาคการศึกษา + ปีการศึกษา + หน่วยกิต */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <label htmlFor="course-sem" className="block text-xs font-semibold text-slate-700">ภาคการศึกษา *</label>
+                  <select
+                    id="course-sem"
+                    value={courseForm.semester_id}
+                    onChange={(e) => setCourseForm({ ...courseForm, semester_id: Number(e.target.value) })}
+                    className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3 py-2.5 select-chevron focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  >
+                    <option value={1}>1</option>
+                    <option value={2}>2</option>
+                    <option value={3}>ภาคฤดูร้อน</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label htmlFor="course-year" className="block text-xs font-semibold text-slate-700">ปีการศึกษา *</label>
+                  <input
+                    id="course-year"
+                    type="number"
+                    min={2020}
+                    max={2099}
+                    value={courseForm.year}
+                    onChange={(e) => setCourseForm({ ...courseForm, year: Number(e.target.value) })}
+                    className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label htmlFor="course-credit" className="block text-xs font-semibold text-slate-700">หน่วยกิต *</label>
+                  <input
+                    id="course-credit"
+                    type="text"
+                    value={courseForm.credit}
+                    onChange={(e) => setCourseForm({ ...courseForm, credit: e.target.value })}
+                    placeholder="เช่น 3(3-0-6)"
+                    className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* ชื่อวิชาไทย + อังกฤษ */}
+              <div className="space-y-1">
+                <label htmlFor="course-th" className="block text-xs font-semibold text-slate-700">ชื่อรายวิชา (ภาษาไทย) *</label>
+                <input
+                  id="course-th"
+                  type="text"
+                  value={courseForm.course_name_th}
+                  onChange={(e) => setCourseForm({ ...courseForm, course_name_th: e.target.value })}
+                  placeholder="เช่น การออกแบบอัลกอริทึมเชิงคิดวิเคราะห์"
+                  className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label htmlFor="course-en" className="block text-xs font-semibold text-slate-700">ชื่อรายวิชา (ภาษาอังกฤษ) *</label>
+                <input
+                  id="course-en"
+                  type="text"
+                  value={courseForm.course_name_en}
+                  onChange={(e) => setCourseForm({ ...courseForm, course_name_en: e.target.value })}
+                  placeholder="เช่น Algorithm Design and Analysis"
+                  className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label htmlFor="course-desc" className="block text-xs font-semibold text-slate-700">คำอธิบายรายวิชา</label>
+                <textarea
+                  id="course-desc"
+                  rows={3}
+                  value={courseForm.description}
+                  onChange={(e) => setCourseForm({ ...courseForm, description: e.target.value })}
+                  placeholder="พิมพ์คำอธิบายรายวิชาโดยย่อ..."
+                  className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl p-3 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label htmlFor="course-objectives" className="block text-xs font-semibold text-slate-700">
+                  วัตถุประสงค์รายวิชา (CLOs) <span className="font-normal text-slate-400">— 1 บรรทัดต่อ 1 ข้อ</span>
+                </label>
+                <textarea
+                  id="course-objectives"
+                  rows={4}
+                  value={courseForm.objectivesInput}
+                  onChange={(e) => setCourseForm({ ...courseForm, objectivesInput: e.target.value })}
+                  placeholder={"เช่น:\nเข้าใจหลักการวิเคราะห์ข้อมูลขั้นสูง\nพัฒนาแบบจำลองคาดการณ์พฤติกรรมลูกค้าได้"}
+                  className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl p-3 focus:ring-2 focus:ring-indigo-500 focus:outline-none font-sans"
+                />
+              </div>
+
+              {/* Enrollment Code */}
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-amber-700">
+                    <KeyRound size={14} />
+                    <span className="text-xs font-bold">รหัสลงทะเบียนเข้าวิชา</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+                      const digits = '23456789';
+                      let code = '';
+                      for (let i = 0; i < 3; i++) code += letters[Math.floor(Math.random() * letters.length)];
+                      for (let i = 0; i < 3; i++) code += digits[Math.floor(Math.random() * digits.length)];
+                      setCourseForm({ ...courseForm, enrollment_code: code });
+                    }}
+                    className="flex items-center gap-1 text-[11px] font-bold text-amber-700 bg-amber-100 hover:bg-amber-200 border border-amber-300 px-2.5 py-1 rounded-lg transition"
+                  >
+                    <RefreshCw size={11} />
+                    สุ่มรหัส
+                  </button>
+                </div>
+                <input
+                  id="course-enrollment-code"
+                  type="text"
+                  value={courseForm.enrollment_code}
+                  onChange={(e) => setCourseForm({ ...courseForm, enrollment_code: e.target.value })}
+                  placeholder="เช่น class2024 (ปล่อยว่างไว้ = ไม่ต้องใส่รหัส)"
+                  className="w-full text-xs text-slate-900 border border-amber-200 rounded-xl px-3.5 py-2.5 bg-white focus:ring-2 focus:ring-amber-400 focus:outline-none font-mono tracking-wider"
+                />
+                <p className="text-[10px] text-amber-600 leading-relaxed">
+                  นักศึกษาต้องกรอกรหัสนี้ให้ถูกต้องก่อนถึงจะเข้าดูวิชาได้ หากเว้นว่างไว้ทุกคนที่ login แล้วสามารถเข้าได้ทันที
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => { setShowCourseModal(false); setCourseFormError(''); }}
+                  className="text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-medium px-4 py-2.5 rounded-xl transition"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  className="text-xs text-white bg-[#4F46E5] hover:bg-indigo-700 font-bold px-5 py-2.5 rounded-xl transition"
+                >
+                  {editingCourse ? 'บันทึกการแก้ไข' : 'สร้างรายวิชา'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 5.3 Material Create/Edit Modal Form */}
+      {showMaterialModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-3xl border border-slate-200 shadow-xl overflow-hidden animate-in fade-in zoom-in duration-150">
+            {/* Header Form */}
+            <div className="bg-[#4F46E5] text-white p-5 flex items-center justify-between">
+              <h3 className="text-sm font-bold">
+                {editingMaterial ? `แก้ไขเอกสาร: ${editingMaterial.title.slice(0, 30)}…` : 'เพิ่มเอกสารการเรียนการสอน (Add Material)'}
+              </h3>
+              <button
+                onClick={() => { setShowMaterialModal(false); setEditingMaterial(null); setMaterialForm({ title: '', type: 'slides', week_number: 1, file_url: '', description: '' }); }}
+                className="p-1.5 rounded-lg hover:bg-white/10 text-white/85 hover:text-white transition"
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            {/* Input fields */}
+            <form onSubmit={handleAddMaterial} className="p-6 space-y-4">
+              <div className="space-y-1">
+                <label htmlFor="mat-title" className="block text-xs font-semibold text-slate-700">หัวเรื่องสไลด์การสอน/หัวเรื่องย่อย *</label>
+                <input
+                  id="mat-title"
+                  type="text"
+                  required
+                  value={materialForm.title}
+                  onChange={(e) => setMaterialForm({ ...materialForm, title: e.target.value })}
+                  placeholder="เช่น สไลด์ทบทวน OOP และสัปดาห์ที่ 3"
+                  className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label htmlFor="mat-type" className="block text-xs font-semibold text-slate-700">ประเภทข้อมูล *</label>
+                  <select
+                    id="mat-type"
+                    value={materialForm.type}
+                    onChange={(e) => setMaterialForm({ ...materialForm, type: e.target.value as MaterialType })}
+                    className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-2 py-2.5 select-chevron"
+                  >
+                    <option value="slides">Slides (สไลด์)</option>
+                    <option value="video">Video (วิดีโอ)</option>
+                    <option value="document">Document (เอกสาร)</option>
+                    <option value="link">Link (ลิงก์ทั่วไป)</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label htmlFor="mat-week" className="block text-xs font-semibold text-slate-700">สอนรายสัปดาห์ที่</label>
+                  <input
+                    id="mat-week"
+                    type="number"
+                    min="1"
+                    max="18"
+                    value={materialForm.week_number}
+                    onChange={(e) => setMaterialForm({ ...materialForm, week_number: Number(e.target.value) })}
+                    className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label htmlFor="mat-url" className="block text-xs font-semibold text-slate-700">URL แนบไฟล์/ลิงก์หลักสูตร *</label>
+                <input
+                  id="mat-url"
+                  type="url"
+                  required
+                  value={materialForm.file_url}
+                  onChange={(e) => setMaterialForm({ ...materialForm, file_url: e.target.value })}
+                  placeholder="เช่น https://storage.google.com/myfile.pdf"
+                  className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label htmlFor="mat-desc" className="block text-xs font-semibold text-slate-700">อธิบายประกอบเพิ่มเติม (ไม่บังคับ)</label>
+                <input
+                  id="mat-desc"
+                  type="text"
+                  value={materialForm.description}
+                  onChange={(e) => setMaterialForm({ ...materialForm, description: e.target.value })}
+                  placeholder="ย่อหน้าแนะนำสิ่งที่ต้องเรียนรู้คร่าว ๆ..."
+                  className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => { setShowMaterialModal(false); setEditingMaterial(null); setMaterialForm({ title: '', type: 'slides', week_number: 1, file_url: '', description: '' }); }}
+                  className="text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-medium px-4 py-2.5 rounded-xl transition"
+                >
+                  ย้อนกลับ
+                </button>
+                <button
+                  type="submit"
+                  className="text-xs text-white bg-[#4F46E5] hover:bg-indigo-700 font-bold px-5 py-2.5 rounded-xl transition"
+                >
+                  {editingMaterial ? 'บันทึกการแก้ไข' : 'ยืนยันบันทึกเอกสาร'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 5.4 Assignment Create/Edit Modal Form */}
+      {showAssignmentModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-3xl border border-slate-200 shadow-xl overflow-hidden animate-in fade-in zoom-in duration-150">
+            {/* Header layout */}
+            <div className="bg-[#4F46E5] text-white p-5 flex items-center justify-between">
+              <h3 className="text-sm font-bold">
+                {editingAssignment ? `แก้ไขงานมอบหมาย: ${editingAssignment.title.slice(0, 25)}…` : 'มอบหมายงานให้นักศึกษา (Add Assignment)'}
+              </h3>
+              <button
+                onClick={() => { setShowAssignmentModal(false); setEditingAssignment(null); setAssignmentForm({ title: '', description: '', due_date: '2026-06-30', attachment_url: '', status: 'open' }); }}
+                className="p-1.5 rounded-lg hover:bg-white/10 text-white/80 hover:text-white transition"
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            {/* Form list and fields */}
+            <form onSubmit={handleAddAssignment} className="p-6 space-y-4">
+              <div className="space-y-1">
+                <label htmlFor="assign-title" className="block text-xs font-semibold text-slate-700">ชื่องานมอบหมาย *</label>
+                <input
+                  id="assign-title"
+                  type="text"
+                  required
+                  value={assignmentForm.title}
+                  onChange={(e) => setAssignmentForm({ ...assignmentForm, title: e.target.value })}
+                  placeholder="เช่น งานส่งแลป: โครงงานตัวเก็บข้อมูลเบื้องต้น"
+                  className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label htmlFor="assign-desc" className="block text-xs font-semibold text-slate-700">อธิบายรายละเอียดงานและความต้องการ *</label>
+                <textarea
+                  id="assign-desc"
+                  required
+                  rows={3}
+                  value={assignmentForm.description}
+                  onChange={(e) => setAssignmentForm({ ...assignmentForm, description: e.target.value })}
+                  placeholder="ระบุข้อกำหนด วิธีส่ง เกณฑ์ และวิธีการเก็บข้อมูล..."
+                  className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl p-3 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label htmlFor="assign-due" className="block text-xs font-semibold text-slate-700">วันครบเขตกำหนดส่ง *</label>
+                  <input
+                    id="assign-due"
+                    type="date"
+                    required
+                    value={assignmentForm.due_date}
+                    onChange={(e) => setAssignmentForm({ ...assignmentForm, due_date: e.target.value })}
+                    className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label htmlFor="assign-status" className="block text-xs font-semibold text-slate-700">สถานะเปิดงาน *</label>
+                  <select
+                    id="assign-status"
+                    value={assignmentForm.status}
+                    onChange={(e) => setAssignmentForm({ ...assignmentForm, status: e.target.value as AssignmentStatus })}
+                    className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-2 py-2.5 select-chevron"
+                  >
+                    <option value="open">เปิดรับส่ง (Open)</option>
+                    <option value="upcoming">เร็วๆ นี้ (Upcoming)</option>
+                    <option value="closed">ปิดรับงาน (Closed)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label htmlFor="assign-url" className="block text-xs font-semibold text-slate-700">ลิงก์แนบโจทย์งานเพิ่มเติม (ไม่บังคับ)</label>
+                <input
+                  id="assign-url"
+                  type="url"
+                  value={assignmentForm.attachment_url}
+                  onChange={(e) => setAssignmentForm({ ...assignmentForm, attachment_url: e.target.value })}
+                  placeholder="เช่น https://storage.google.com/project_guidelines.pdf"
+                  className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => { setShowAssignmentModal(false); setEditingAssignment(null); setAssignmentForm({ title: '', description: '', due_date: '2026-06-30', attachment_url: '', status: 'open' }); }}
+                  className="text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-medium px-4 py-2.5 rounded-xl transition"
+                >
+                  ย้อนกลับ
+                </button>
+                <button
+                  type="submit"
+                  className="text-xs text-white bg-[#4F46E5] hover:bg-indigo-700 font-bold px-5 py-2.5 rounded-xl transition"
+                >
+                  {editingAssignment ? 'บันทึกการแก้ไข' : 'ยืนยันมอบหมายงาน'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Active Learning Modal */}
+      {showActivityModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-3xl border border-slate-200 shadow-xl overflow-hidden animate-in fade-in zoom-in duration-150">
+            <div className="bg-green-600 text-white p-5 flex items-center justify-between">
+              <h3 className="text-sm font-bold flex items-center gap-2">
+                <Zap size={15} />
+                {editingActivity ? 'แก้ไขกิจกรรม Active Learning' : 'เพิ่มกิจกรรม Active Learning'}
+              </h3>
+              <button onClick={() => { setShowActivityModal(false); setEditingActivity(null); }} className="p-1.5 rounded-lg hover:bg-white/10 text-white/80 hover:text-white transition">
+                <X size={15} />
+              </button>
+            </div>
+            <form onSubmit={handleSaveActivity} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+              {/* Type selector */}
+              <div className="space-y-1">
+                <label className="block text-xs font-semibold text-slate-700">ประเภท Active Learning *</label>
+                <select
+                  value={activityForm.type_id}
+                  onChange={e => setActivityForm(f => ({ ...f, type_id: e.target.value }))}
+                  className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-green-500 focus:outline-none select-chevron"
+                >
+                  <option value="">— เลือกประเภทกิจกรรม —</option>
+                  {AL_TYPES.map(t => (
+                    <option key={t.type_id} value={t.type_id}>{t.name}</option>
+                  ))}
+                </select>
+                {/* Info panel for selected type */}
+                {activityForm.type_id && (() => {
+                  const t = AL_TYPES.find(x => x.type_id === activityForm.type_id);
+                  return t ? (
+                    <div className="bg-green-50 border border-green-100 rounded-xl p-3 space-y-1 mt-1">
+                      <p className="text-[11px] font-semibold text-green-800">{t.description}</p>
+                      <p className="text-[10px] text-slate-600 italic">ตัวอย่าง: {t.example}</p>
+                    </div>
+                  ) : null;
+                })()}
+              </div>
+              {/* Custom title override */}
+              <div className="space-y-1">
+                <label className="block text-xs font-semibold text-slate-700">
+                  ชื่อกิจกรรม (ปล่อยว่างเพื่อใช้ชื่อประเภท)
+                </label>
+                <input
+                  type="text"
+                  value={activityForm.title}
+                  onChange={e => setActivityForm(f => ({ ...f, title: e.target.value }))}
+                  placeholder={activityForm.type_id ? AL_TYPES.find(t => t.type_id === activityForm.type_id)?.name : 'ระบุชื่อกิจกรรมที่กำหนดเอง'}
+                  className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-green-500 focus:outline-none"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="block text-xs font-semibold text-slate-700">รายละเอียด / วิธีดำเนินกิจกรรม</label>
+                <textarea
+                  rows={3}
+                  value={activityForm.description}
+                  onChange={e => setActivityForm(f => ({ ...f, description: e.target.value }))}
+                  placeholder="อธิบายวิธีดำเนินกิจกรรม ขั้นตอน และเป้าหมายการเรียนรู้..."
+                  className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl p-3 focus:ring-2 focus:ring-green-500 focus:outline-none leading-relaxed"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="block text-xs font-semibold text-slate-700 flex items-center gap-1">
+                  <Timer size={12} className="text-slate-400" />
+                  จำนวนเวลาทำกิจกรรม
+                </label>
+                <input
+                  type="text"
+                  value={activityForm.duration}
+                  onChange={e => setActivityForm(f => ({ ...f, duration: e.target.value }))}
+                  placeholder="เช่น 30 นาที, 1 ชั่วโมง"
+                  className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-green-500 focus:outline-none"
+                />
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-100">
+                <button type="button" onClick={() => { setShowActivityModal(false); setEditingActivity(null); setActivityForm({ type_id: '', title: '', description: '', duration: '' }); }} className="text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-medium px-4 py-2.5 rounded-xl transition">ยกเลิก</button>
+                <button type="submit" className="text-xs text-white bg-green-600 hover:bg-green-700 font-bold px-5 py-2.5 rounded-xl transition">
+                  {editingActivity ? 'บันทึกการแก้ไข' : 'เพิ่มกิจกรรม'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Teaching Reflection Modal */}
+      {showReflectionModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-3xl border border-slate-200 shadow-xl overflow-hidden animate-in fade-in zoom-in duration-150">
+            <div className="bg-purple-700 text-white p-5 flex items-center justify-between">
+              <h3 className="text-sm font-bold flex items-center gap-2">
+                <NotebookPen size={15} />
+                {editingReflection ? `แก้ไขบันทึกสัปดาห์ที่ ${editingReflection.week_number}` : 'บันทึกหลังการสอน'}
+              </h3>
+              <button onClick={() => { setShowReflectionModal(false); setEditingReflection(null); }} className="p-1.5 rounded-lg hover:bg-white/10 text-white/80 hover:text-white transition">
+                <X size={15} />
+              </button>
+            </div>
+            <form onSubmit={handleSaveReflection} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+              <div className="space-y-1">
+                <label className="block text-xs font-semibold text-slate-700">สัปดาห์ที่ *</label>
+                <input
+                  type="number" required min={1} max={18}
+                  value={reflectionForm.week_number}
+                  onChange={e => setReflectionForm(f => ({ ...f, week_number: Number(e.target.value) }))}
+                  className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="block text-xs font-semibold text-slate-700">บันทึกหลังสอน *</label>
+                <textarea
+                  required rows={5}
+                  value={reflectionForm.content}
+                  onChange={e => setReflectionForm(f => ({ ...f, content: e.target.value }))}
+                  placeholder="บันทึกสิ่งที่เกิดขึ้นในชั้นเรียน ปัญหาที่พบ สิ่งที่ควรปรับปรุง และข้อสังเกตสำหรับการสอนครั้งถัดไป..."
+                  className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl p-3 focus:ring-2 focus:ring-purple-500 focus:outline-none leading-relaxed"
+                />
+              </div>
+
+              {/* Image upload */}
+              <div className="space-y-2">
+                <label className="block text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                  <ImageIcon size={13} className="text-purple-500" />
+                  รูปภาพประกอบ (ไม่บังคับ)
+                </label>
+                {reflectionForm.image_url ? (
+                  <div className="relative">
+                    <img
+                      src={reflectionForm.image_url}
+                      alt="preview"
+                      className="w-full max-h-48 object-cover rounded-xl border border-purple-100"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setReflectionForm(f => ({ ...f, image_url: '' }))}
+                      className="absolute top-2 right-2 w-7 h-7 bg-red-500 hover:bg-red-600 text-white rounded-lg flex items-center justify-center transition shadow"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                ) : (
+                  <label className="flex items-center justify-center gap-2 w-full border-2 border-dashed border-purple-200 hover:border-purple-400 rounded-xl py-6 cursor-pointer transition-colors bg-purple-50/30 hover:bg-purple-50">
+                    <ImageIcon size={18} className="text-purple-300" />
+                    <span className="text-xs text-slate-500">คลิกเพื่อเลือกรูปภาพ</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={e => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        if (file.size > 5 * 1024 * 1024) { alert('ไฟล์รูปต้องไม่เกิน 5 MB'); return; }
+                        const reader = new FileReader();
+                        reader.onload = () => setReflectionForm(f => ({ ...f, image_url: reader.result as string }));
+                        reader.readAsDataURL(file);
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-100">
+                <button type="button" onClick={() => { setShowReflectionModal(false); setEditingReflection(null); setReflectionForm({ week_number: 1, content: '', image_url: '' }); }} className="text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-medium px-4 py-2.5 rounded-xl transition">ยกเลิก</button>
+                <button type="submit" className="text-xs text-white bg-purple-700 hover:bg-purple-800 font-bold px-5 py-2.5 rounded-xl transition">
+                  {editingReflection ? 'บันทึกการแก้ไข' : 'บันทึก'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+}

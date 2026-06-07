@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Google Sans", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  
+  /* Custom Accent colors mapping */
+  --color-accent-indigo: #4F46E5;
+  --color-accent-indigo-hover: #4338CA;
+  
+  /* Tailwind-v4 equivalents for Pastel Theme Mapping directly so classes like hover:bg-pastel-blue function cleanly */
+  --color-pastel-blue-bg: #DBEAFE;
+  --color-pastel-blue-text: #1D4ED8;
+  
+  --color-pastel-pink-bg: #FCE7F3;
+  --color-pastel-pink-text: #9D174D;
+  
+  --color-pastel-green-bg: #DCFCE7;
+  --color-pastel-green-text: #15803D;
+  
+  --color-pastel-purple-bg: #F3E8FF;
+  --color-pastel-purple-text: #7E22CE;
+}
+
+/* Google Sans — apply globally with proper optical sizing */
+*, *::before, *::after {
+  font-family: "Google Sans", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  font-optical-sizing: auto;
+  font-variation-settings: "GRAD" 0;
+}
+
+/* Custom styling helper for smooth inputs and responsive elements */
+select.select-chevron {
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+  background-position: right 0.75rem center;
+  background-repeat: no-repeat;
+  background-size: 1.25em 1.25em;
+  padding-right: 2.5rem;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+}
+
+/* Modern focus ring adjustments for input fields */
+input, select, textarea {
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Scrollbar beautifier */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
