@@ -63,8 +63,9 @@ const CourseDetail: React.FC<{
   assignments: Assignment[];
   questions: Question[];
   activities: ActiveLearning[];
+  enrolledCount: number;
   onGoToFullView: () => void;
-}> = ({ course, materials, assignments, questions, activities, onGoToFullView }) => {
+}> = ({ course, materials, assignments, questions, activities, enrolledCount, onGoToFullView }) => {
   const hasHours = (course.theory_hours || 0) + (course.practice_hours || 0) > 0;
   const weeks = course.total_weeks || 15;
 
@@ -113,7 +114,7 @@ const CourseDetail: React.FC<{
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <StatPill
           icon={<Eye size={14} className="text-blue-600" />}
-          value={course.views || 0}
+          value={enrolledCount}
           label="ผู้เข้าชม"
           colorClass="border-blue-100 bg-blue-50 text-blue-700"
         />
@@ -271,6 +272,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             assignments={assignments.filter(a => a.course_id === selectedCourse.course_id)}
             questions={questions.filter(q => q.course_id === selectedCourse.course_id)}
             activities={activities.filter(a => a.course_id === selectedCourse.course_id)}
+            enrolledCount={new Set(visits.filter(v => v.course_id === selectedCourse.course_id).map(v => v.student_id)).size}
             onGoToFullView={() => onSelectCourse(selectedCourse.course_id)}
           />
         ) : (

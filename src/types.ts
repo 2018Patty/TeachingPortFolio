@@ -132,6 +132,7 @@ export interface ActiveLearning {
   title: string;
   description: string;
   duration: string;
+  file_url?: string;
   created_at?: string;
 }
 
@@ -158,6 +159,9 @@ export interface AssignmentSubmission {
   course_id: string;
   submitted_at?: string;
   note?: string;
+  answer_text?: string;
+  file_url?: string;
+  link_url?: string;
 }
 
 export interface TeachingReflection {

@@ -3,11 +3,11 @@ import {
   User, BookOpen, FileText, Video, ExternalLink, ChevronRight,
   ArrowLeft, Layers, GraduationCap, Mail, IdCard, Edit, Save,
   X, LogOut, AlertCircle, CheckCircle2, Clock, Paperclip,
-  Check, Circle, Presentation,
+  Check, Circle, Presentation, Zap, Timer,
 } from 'lucide-react';
 import {
   StudentProfile, Course, Material, Assignment,
-  StudentCourseVisit, AssignmentSubmission, MaterialType,
+  StudentCourseVisit, AssignmentSubmission, MaterialType, ActiveLearning,
 } from '../types';
 import { supabase } from '@/lib/supabase';
 
@@ -60,13 +60,14 @@ function AssignmentStatusBadge({ status }: { status: string }) {
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
 type SidebarSection = 'info' | 'my-courses';
-type CourseTab      = 'objectives' | 'materials' | 'assignments';
+type CourseTab      = 'objectives' | 'materials' | 'assignments' | 'active_learning';
 
 interface Props {
   studentProfile: StudentProfile;
   courses:     Course[];
   materials:   Material[];
   assignments: Assignment[];
+  activities:  ActiveLearning[];
   visits:      StudentCourseVisit[];
   submissions: AssignmentSubmission[];
   onUpdate: (updated: StudentProfile) => void;
@@ -76,7 +77,7 @@ interface Props {
 // ─── Main component ────────────────────────────────────────────────────────────
 
 export const StudentProfilePage: React.FC<Props> = ({
-  studentProfile, courses, materials, assignments, visits, submissions,
+  studentProfile, courses, materials, assignments, activities, visits, submissions,
   onUpdate, onLogout,
 }) => {
   const needsCompletion = !studentProfile.student_id;
@@ -108,9 +109,10 @@ export const StudentProfilePage: React.FC<Props> = ({
   )];
   const myCourses = courses.filter(c => myVisitedCourseIds.includes(c.course_id));
 
-  const activeCourse     = selectedCourseId ? courses.find(c => c.course_id === selectedCourseId) : null;
-  const courseMaterials  = materials.filter(m => m.course_id === selectedCourseId);
+  const activeCourse      = selectedCourseId ? courses.find(c => c.course_id === selectedCourseId) : null;
+  const courseMaterials   = materials.filter(m => m.course_id === selectedCourseId);
   const courseAssignments = assignments.filter(a => a.course_id === selectedCourseId);
+  const courseActivities  = activities.filter(a => a.course_id === selectedCourseId);
   const mySubmittedIds   = new Set(
     submissions
       .filter(s => s.student_id === studentProfile.id && s.course_id === selectedCourseId)
@@ -479,16 +481,17 @@ export const StudentProfilePage: React.FC<Props> = ({
               </div>
 
               {/* Tab bar */}
-              <div className="flex bg-slate-100 p-1.5 rounded-2xl border border-slate-200 gap-1">
+              <div className="flex flex-wrap bg-slate-100 p-1.5 rounded-2xl border border-slate-200 gap-1">
                 {([
-                  { key: 'objectives',  label: 'วัตถุประสงค์',   icon: CheckCircle2 },
-                  { key: 'materials',   label: 'เอกสารประกอบ',   icon: Layers },
-                  { key: 'assignments', label: 'งานมอบหมาย',     icon: FileText },
+                  { key: 'objectives',     label: 'วัตถุประสงค์',  icon: CheckCircle2 },
+                  { key: 'materials',      label: 'เอกสารประกอบ',  icon: Layers },
+                  { key: 'assignments',    label: 'งานมอบหมาย',    icon: FileText },
+                  { key: 'active_learning', label: 'Active Learning', icon: Zap },
                 ] as { key: CourseTab; label: string; icon: React.ElementType }[]).map(tab => (
                   <button
                     key={tab.key}
                     onClick={() => setCourseTab(tab.key)}
-                    className={`flex-1 flex items-center justify-center gap-1.5 text-xs font-bold py-2.5 px-2 rounded-xl transition whitespace-nowrap ${
+                    className={`flex-1 flex items-center justify-center gap-1.5 text-xs font-bold py-2.5 px-2 rounded-xl transition whitespace-nowrap min-w-fit ${
                       courseTab === tab.key
                         ? 'bg-white text-indigo-700 shadow-sm'
                         : 'text-slate-600 hover:text-slate-900 hover:bg-white/40'
@@ -687,6 +690,74 @@ export const StudentProfilePage: React.FC<Props> = ({
                           </div>
                         );
                       })}
+                    </div>
+                  )}
+                </div>
+              )}
+              {/* Tab: Active Learning */}
+              {courseTab === 'active_learning' && (
+                <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4">
+                  <h3 className="text-sm font-black text-slate-800 flex items-center gap-2">
+                    <Zap size={15} className="text-green-500" />
+                    กิจกรรม Active Learning
+                    <span className="text-[10px] font-bold bg-green-50 text-green-700 border border-green-100 px-2 py-0.5 rounded-full">
+                      {courseActivities.length} กิจกรรม
+                    </span>
+                  </h3>
+
+                  {courseActivities.length === 0 ? (
+                    <div className="border border-dashed border-slate-200 rounded-2xl p-8 text-center text-slate-400 space-y-2">
+                      <Zap size={22} className="mx-auto" />
+                      <p className="text-xs">ยังไม่มีกิจกรรม Active Learning ในวิชานี้</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {courseActivities.map((act, idx) => (
+                        <div key={act.activity_id} className="border border-slate-100 rounded-2xl p-4 bg-slate-50/40 hover:bg-slate-50 transition space-y-2">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="w-8 h-8 rounded-xl bg-green-100 border border-green-200 flex items-center justify-center shrink-0 text-green-700 font-black text-xs">
+                                {idx + 1}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-xs font-bold text-slate-800 leading-snug">{act.title}</p>
+                                {act.type_id && (
+                                  <span className="text-[10px] font-semibold text-green-700 bg-green-50 border border-green-100 px-1.5 py-0.5 rounded-md">
+                                    {act.type_id}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            {act.duration && (
+                              <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-100 border border-slate-200 px-2 py-1 rounded-lg">
+                                <Timer size={10} />
+                                {act.duration}
+                              </span>
+                            )}
+                          </div>
+
+                          {act.description && (
+                            <p className="text-[11px] text-slate-600 leading-relaxed pl-11 whitespace-pre-line">
+                              {act.description}
+                            </p>
+                          )}
+
+                          {act.file_url && (
+                            <div className="pl-11">
+                              <a
+                                href={act.file_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-green-700 bg-green-50 hover:bg-green-100 border border-green-100 px-2.5 py-1 rounded-lg transition"
+                              >
+                                <Paperclip size={11} />
+                                ไฟล์แนบ
+                                <ExternalLink size={10} />
+                              </a>
+                            </div>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>

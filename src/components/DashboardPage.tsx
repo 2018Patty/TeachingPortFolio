@@ -54,8 +54,8 @@ export const DashboardPage: React.FC<DashboardProps> = ({
     return semOk && yearOk;
   });
 
-  // Metrics
-  const totalViews = filteredCourses.reduce((s, c) => s + (c.views || 0), 0);
+  // Metrics — use visits data (student_course_visits) instead of course.views which may not exist in DB
+  const totalViews = visits.filter(v => filteredCourses.some(c => c.course_id === v.course_id)).length;
   const courseIds = filteredCourses.map(c => c.course_id);
 
   // Enrolled students: distinct student_id per course (first-time visit only)
@@ -155,9 +155,9 @@ export const DashboardPage: React.FC<DashboardProps> = ({
         />
         <MetricCard
           icon={<Eye size={18} className="text-emerald-600" />}
-          label="ยอดเข้าชมทั้งหมด"
+          label="นักศึกษาเข้าเรียนทั้งหมด"
           value={totalViews}
-          sub={`เฉลี่ย ${filteredCourses.length ? Math.round(totalViews / filteredCourses.length) : 0} ต่อวิชา`}
+          sub={`เฉลี่ย ${filteredCourses.length ? Math.round(totalViews / filteredCourses.length) : 0} คน/วิชา`}
           color="bg-emerald-50"
         />
         <MetricCard
@@ -196,7 +196,7 @@ export const DashboardPage: React.FC<DashboardProps> = ({
               <button
                 onClick={() => {
                   const rows = filteredCourses
-                    .sort((a, b) => (b.views || 0) - (a.views || 0))
+                    .sort((a, b) => (enrolledByCourse[b.course_id] || 0) - (enrolledByCourse[a.course_id] || 0))
                     .map(course => {
                       const weeks = course.total_weeks || 15;
                       return {
@@ -213,7 +213,7 @@ export const DashboardPage: React.FC<DashboardProps> = ({
                         'รวมทฤษฏีทั้งภาค (ชม.)': (course.theory_hours ?? 0) * weeks,
                         'รวมปฏิบัติทั้งภาค (ชม.)': (course.practice_hours ?? 0) * weeks,
                         'รวมชั่วโมงทั้งหมด': ((course.theory_hours ?? 0) + (course.practice_hours ?? 0)) * weeks,
-                        'ยอดเข้าชม': course.views || 0,
+                        'นักศึกษาที่เข้าเรียน': enrolledByCourse[course.course_id] || 0,
                         'คำถาม': questions.filter(q => q.course_id === course.course_id).length,
                         'Active Learning': activities.filter(a => a.course_id === course.course_id).length,
                         'งานมอบหมาย': assignments.filter(a => a.course_id === course.course_id).length,
@@ -264,12 +264,6 @@ export const DashboardPage: React.FC<DashboardProps> = ({
                     </th>
                     <th className="text-center py-2.5 px-3 font-bold text-slate-600 text-[11px]">
                       <div className="flex items-center justify-center gap-1">
-                        <Eye size={11} className="text-sky-500" />
-                        <span>Views</span>
-                      </div>
-                    </th>
-                    <th className="text-center py-2.5 px-3 font-bold text-slate-600 text-[11px]">
-                      <div className="flex items-center justify-center gap-1">
                         <MessageCircle size={11} className="text-amber-500" />
                         <span>คำถาม</span>
                       </div>
@@ -290,7 +284,7 @@ export const DashboardPage: React.FC<DashboardProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {filteredCourses.sort((a, b) => (b.views || 0) - (a.views || 0)).map(course => {
+                  {filteredCourses.sort((a, b) => (enrolledByCourse[b.course_id] || 0) - (enrolledByCourse[a.course_id] || 0)).map(course => {
                     const weeks = course.total_weeks || 15;
                     const theoryTotal = (course.theory_hours ?? 0) * weeks;
                     const practiceTotal = (course.practice_hours ?? 0) * weeks;
@@ -317,7 +311,6 @@ export const DashboardPage: React.FC<DashboardProps> = ({
                             {enrolledByCourse[course.course_id] ?? 0}
                           </span>
                         </td>
-                        <td className="text-center py-3 px-2 font-semibold text-sky-600">{course.views || 0}</td>
                         <td className="text-center py-3 px-2 font-semibold text-amber-600">{cQ}</td>
                         <td className="text-center py-3 px-2 font-semibold text-green-600">{cAct}</td>
                         <td className="text-center py-3 px-2 font-semibold text-pink-600">{cAss}</td>
@@ -339,7 +332,6 @@ export const DashboardPage: React.FC<DashboardProps> = ({
                     <td className="text-center py-2.5 px-2 text-indigo-700">{totalTheoryHours} ชม.</td>
                     <td className="text-center py-2.5 px-2 text-emerald-700">{totalPracticeHours} ชม.</td>
                     <td className="text-center py-2.5 px-2 text-violet-600">{totalEnrolledStudents} คน</td>
-                    <td className="text-center py-2.5 px-2 text-sky-600">{filteredCourses.reduce((s, c) => s + (c.views || 0), 0)}</td>
                     <td colSpan={4}></td>
                   </tr>
                 </tfoot>
@@ -354,22 +346,23 @@ export const DashboardPage: React.FC<DashboardProps> = ({
 
         {/* Right column */}
         <div className="space-y-5">
-          {/* Views bar chart */}
-          {filteredCourses.length > 0 && (
+          {/* Enrolled-per-course bar chart */}
+          {filteredCourses.length > 0 && totalViews > 0 && (
             <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm space-y-3">
               <h4 className="text-xs font-black text-slate-800 flex items-center gap-1.5">
                 <TrendingUp size={14} className="text-emerald-500" />
-                ยอดเข้าชมต่อวิชา
+                ผู้เข้าเรียนต่อวิชา
               </h4>
               <div className="space-y-2">
-                {filteredCourses.sort((a, b) => (b.views || 0) - (a.views || 0)).slice(0, 6).map(c => {
-                  const maxV = Math.max(...filteredCourses.map(x => x.views || 0), 1);
-                  const pct = Math.round(((c.views || 0) / maxV) * 100);
+                {filteredCourses.sort((a, b) => (enrolledByCourse[b.course_id] || 0) - (enrolledByCourse[a.course_id] || 0)).slice(0, 6).map(c => {
+                  const maxV = Math.max(...filteredCourses.map(x => enrolledByCourse[x.course_id] || 0), 1);
+                  const val = enrolledByCourse[c.course_id] || 0;
+                  const pct = Math.round((val / maxV) * 100);
                   return (
                     <div key={c.course_id} className="space-y-0.5">
                       <div className="flex justify-between text-[10px]">
                         <span className="font-semibold text-slate-700 truncate max-w-[140px]">{c.course_code}</span>
-                        <span className="font-bold text-emerald-600">{c.views || 0}</span>
+                        <span className="font-bold text-emerald-600">{val} คน</span>
                       </div>
                       <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                         <div className="h-full bg-emerald-400 rounded-full transition-all duration-500" style={{ width: `${pct}%` }} />

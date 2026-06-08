@@ -36,7 +36,12 @@ import {
   ShieldCheck,
   Eye as EyeIcon,
   EyeOff,
-  RefreshCw
+  RefreshCw,
+  Upload,
+  CheckCircle2,
+  AlertCircle as AlertCircleIcon,
+  Loader2,
+  File as FileIcon
 } from 'lucide-react';
 
 import { Role, StudentProfile, StudentCourseVisit, AssignmentSubmission, Course, Material, Assignment, MaterialType, AssignmentStatus, SiteProfile, Question, Reply, ActiveLearning, TeachingReflection, AL_TYPES } from './types';
@@ -110,6 +115,14 @@ export default function App() {
   const [submissions, setSubmissions] = useState<AssignmentSubmission[]>([]);
   const [allStudents, setAllStudents] = useState<StudentProfile[]>([]);
 
+  // Submit Assignment Modal state (student)
+  const [showSubmitModal, setShowSubmitModal] = useState(false);
+  const [submittingAssignment, setSubmittingAssignment] = useState<Assignment | null>(null);
+  const [submitForm, setSubmitForm] = useState({ answer_text: '', link_url: '' });
+  const [submitFile, setSubmitFile] = useState<File | null>(null);
+  const [submitUploading, setSubmitUploading] = useState(false);
+  const [submitUploadError, setSubmitUploadError] = useState('');
+
   // Course Form Modal state
   const [showCourseModal, setShowCourseModal] = useState(false);
   const [editingCourse, setEditingCourse] = useState<Course | null>(null);
@@ -141,6 +154,11 @@ export default function App() {
     description: ''
   });
 
+  const [materialUploadMode, setMaterialUploadMode] = useState<'url' | 'file'>('url');
+  const [materialFiles, setMaterialFiles] = useState<File[]>([]);
+  const [materialUploading, setMaterialUploading] = useState(false);
+  const [materialUploadProgress, setMaterialUploadProgress] = useState<{name: string; status: 'pending' | 'uploading' | 'done' | 'error'; error?: string}[]>([]);
+
   // Assignment Form Modal state
   const [showAssignmentModal, setShowAssignmentModal] = useState(false);
   const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null);
@@ -149,7 +167,10 @@ export default function App() {
   const [activities, setActivities] = useState<ActiveLearning[]>([]);
   const [showActivityModal, setShowActivityModal] = useState(false);
   const [editingActivity, setEditingActivity] = useState<ActiveLearning | null>(null);
-  const [activityForm, setActivityForm] = useState({ type_id: '', title: '', description: '', duration: '' });
+  const [activityForm, setActivityForm] = useState({ type_id: '', title: '', description: '', duration: '', file_url: '' });
+  const [activityFile, setActivityFile] = useState<File | null>(null);
+  const [activityUploading, setActivityUploading] = useState(false);
+  const [activityUploadError, setActivityUploadError] = useState('');
 
 
   // Teaching Reflection state
@@ -562,6 +583,15 @@ export default function App() {
     setReplies(replies.filter((r: Reply) => r.question_id !== questionId));
   };
 
+  const resetActivityModal = () => {
+    setShowActivityModal(false);
+    setEditingActivity(null);
+    setActivityForm({ type_id: '', title: '', description: '', duration: '', file_url: '' });
+    setActivityFile(null);
+    setActivityUploading(false);
+    setActivityUploadError('');
+  };
+
   // Active Learning Handlers
   const handleSaveActivity = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -570,21 +600,37 @@ export default function App() {
     const resolvedTitle = activityForm.title.trim() || selectedType?.name || '';
     if (!resolvedTitle) { alert('กรุณาเลือกประเภทกิจกรรมหรือระบุชื่อกิจกรรม'); return; }
 
+    let fileUrl = activityForm.file_url.trim();
+
+    if (activityFile) {
+      setActivityUploading(true);
+      setActivityUploadError('');
+      const safeName = activityFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const storagePath = `${selectedCourseId}/al-${Date.now()}_${safeName}`;
+      const { error: uploadError } = await supabase.storage.from('course-materials').upload(storagePath, activityFile, { upsert: false });
+      if (uploadError) {
+        setActivityUploadError(uploadError.message);
+        setActivityUploading(false);
+        return;
+      }
+      const { data: urlData } = supabase.storage.from('course-materials').getPublicUrl(storagePath);
+      fileUrl = urlData.publicUrl;
+      setActivityUploading(false);
+    }
+
     if (editingActivity) {
-      const updateData = { type_id: activityForm.type_id, title: resolvedTitle, description: activityForm.description.trim(), duration: activityForm.duration.trim() };
+      const updateData = { type_id: activityForm.type_id, title: resolvedTitle, description: activityForm.description.trim(), duration: activityForm.duration.trim(), file_url: fileUrl };
       const { error } = await supabase.from('active_learning').update(updateData).eq('activity_id', editingActivity.activity_id);
       if (error) { alert(`ไม่สามารถแก้ไขกิจกรรมได้: ${error.message}`); return; }
       setActivities(activities.map((a: ActiveLearning) => a.activity_id === editingActivity.activity_id ? { ...a, ...updateData } : a));
-      setEditingActivity(null);
     } else {
       const activity_id = `al-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-      const newActivity: ActiveLearning = { activity_id, course_id: selectedCourseId, type_id: activityForm.type_id, title: resolvedTitle, description: activityForm.description.trim(), duration: activityForm.duration.trim() };
+      const newActivity: ActiveLearning = { activity_id, course_id: selectedCourseId, type_id: activityForm.type_id, title: resolvedTitle, description: activityForm.description.trim(), duration: activityForm.duration.trim(), file_url: fileUrl };
       const { error } = await supabase.from('active_learning').insert(newActivity);
       if (error) { alert(`ไม่สามารถเพิ่มกิจกรรมได้: ${error.message}`); return; }
       setActivities([...activities, newActivity]);
     }
-    setShowActivityModal(false);
-    setActivityForm({ type_id: '', title: '', description: '', duration: '' });
+    resetActivityModal();
   };
 
   const handleDeleteActivity = async (activityId: string) => {
@@ -596,7 +642,9 @@ export default function App() {
 
   const handleEditActivityClick = (activity: ActiveLearning) => {
     setEditingActivity(activity);
-    setActivityForm({ type_id: activity.type_id || '', title: activity.title, description: activity.description, duration: activity.duration });
+    setActivityForm({ type_id: activity.type_id || '', title: activity.title, description: activity.description, duration: activity.duration, file_url: activity.file_url || '' });
+    setActivityFile(null);
+    setActivityUploadError('');
     setShowActivityModal(true);
   };
 
@@ -863,6 +911,56 @@ export default function App() {
     setShowCourseModal(true);
   };
 
+  const resetSubmitModal = () => {
+    setShowSubmitModal(false);
+    setSubmittingAssignment(null);
+    setSubmitForm({ answer_text: '', link_url: '' });
+    setSubmitFile(null);
+    setSubmitUploading(false);
+    setSubmitUploadError('');
+  };
+
+  const handleSubmitAssignment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!submittingAssignment || !selectedCourseId || !studentProfile) return;
+
+    const hasContent = submitForm.answer_text.trim() || submitFile || submitForm.link_url.trim();
+    if (!hasContent) { alert('กรุณากรอกคำตอบ หรือแนบไฟล์ หรือใส่ลิงก์งาน'); return; }
+
+    let fileUrl = '';
+    if (submitFile) {
+      setSubmitUploading(true);
+      setSubmitUploadError('');
+      const safeName = submitFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const storagePath = `submissions/${submittingAssignment.assignment_id}/${studentProfile.id}_${Date.now()}_${safeName}`;
+      const { error: uploadError } = await supabase.storage.from('course-materials').upload(storagePath, submitFile, { upsert: false });
+      if (uploadError) {
+        setSubmitUploadError(uploadError.message);
+        setSubmitUploading(false);
+        return;
+      }
+      const { data: urlData } = supabase.storage.from('course-materials').getPublicUrl(storagePath);
+      fileUrl = urlData.publicUrl;
+      setSubmitUploading(false);
+    }
+
+    const submission_id = `sub-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const newSub: AssignmentSubmission = {
+      submission_id,
+      student_id: studentProfile.id,
+      assignment_id: submittingAssignment.assignment_id,
+      course_id: selectedCourseId,
+      submitted_at: new Date().toISOString(),
+      answer_text: submitForm.answer_text.trim() || undefined,
+      file_url: fileUrl || undefined,
+      link_url: submitForm.link_url.trim() || undefined,
+    };
+    const { error } = await supabase.from('assignment_submissions').insert(newSub);
+    if (error) { alert(`ส่งงานไม่สำเร็จ: ${error.message}`); return; }
+    setSubmissions(prev => [newSub, ...prev]);
+    resetSubmitModal();
+  };
+
   // Navigate to course in main view with specific tab
   const handleBackOfficeNavigateToCourse = (courseId: string, tab: string) => {
     setSelectedCourseId(courseId);
@@ -891,40 +989,137 @@ export default function App() {
   };
 
   // Add or Edit teaching material
+  const resetMaterialModal = () => {
+    setShowMaterialModal(false);
+    setEditingMaterial(null);
+    setMaterialForm({ title: '', type: 'slides', week_number: 1, file_url: '', description: '' });
+    setMaterialUploadMode('url');
+    setMaterialFiles([]);
+    setMaterialUploading(false);
+    setMaterialUploadProgress([]);
+  };
+
   const handleAddMaterial = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!selectedCourseId) return;
 
     if (editingMaterial) {
+      let fileUrl = materialForm.file_url.trim() || 'https://example.com';
+
+      if (materialUploadMode === 'file' && materialFiles.length > 0) {
+        setMaterialUploading(true);
+        setMaterialUploadProgress([{ name: materialFiles[0].name, status: 'uploading' }]);
+        const file = materialFiles[0];
+        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const storagePath = `${selectedCourseId}/${Date.now()}_${safeName}`;
+        const { error: uploadError } = await supabase.storage.from('course-materials').upload(storagePath, file, { upsert: false });
+        if (uploadError) {
+          setMaterialUploadProgress([{ name: file.name, status: 'error', error: uploadError.message }]);
+          setMaterialUploading(false);
+          return;
+        }
+        const { data: urlData } = supabase.storage.from('course-materials').getPublicUrl(storagePath);
+        fileUrl = urlData.publicUrl;
+        setMaterialUploadProgress([{ name: file.name, status: 'done' }]);
+        setMaterialUploading(false);
+      }
+
       const updateData = {
         title: materialForm.title.trim(),
         type: materialForm.type,
         week_number: Number(materialForm.week_number),
-        file_url: materialForm.file_url.trim() || 'https://example.com',
+        file_url: fileUrl,
         description: materialForm.description.trim()
       };
       const { error } = await supabase.from('materials').update(updateData).eq('material_id', editingMaterial.material_id);
       if (error) { alert(`ไม่สามารถแก้ไขเอกสารได้: ${error.message}`); return; }
       setMaterials(materials.map((m: Material) => m.material_id === editingMaterial.material_id ? { ...m, ...updateData } : m));
-      setEditingMaterial(null);
-    } else {
-      const material_id = `mat-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
-      const newMaterial: Material = {
-        material_id,
-        course_id: selectedCourseId,
-        title: materialForm.title.trim(),
-        type: materialForm.type,
-        week_number: Number(materialForm.week_number),
-        file_url: materialForm.file_url.trim() || 'https://example.com',
-        description: materialForm.description.trim()
-      };
-      const { error } = await supabase.from('materials').insert(newMaterial);
-      if (error) { alert(`ไม่สามารถเพิ่มเอกสารได้: ${error.message}`); return; }
-      setMaterials([...materials, newMaterial]);
+      resetMaterialModal();
+      return;
     }
 
-    setShowMaterialModal(false);
-    setMaterialForm({ title: '', type: 'slides', week_number: 1, file_url: '', description: '' });
+    if (materialUploadMode === 'file' && materialFiles.length > 0) {
+      setMaterialUploading(true);
+      setMaterialUploadProgress(materialFiles.map(f => ({ name: f.name, status: 'pending' })));
+
+      const newMaterials: Material[] = [];
+      let hasError = false;
+
+      for (let i = 0; i < materialFiles.length; i++) {
+        const file = materialFiles[i];
+        setMaterialUploadProgress(prev => prev.map((p, idx) => idx === i ? { ...p, status: 'uploading' } : p));
+
+        const ext = file.name.split('.').pop()?.toLowerCase() || '';
+        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const storagePath = `${selectedCourseId}/${Date.now()}_${safeName}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from('course-materials')
+          .upload(storagePath, file, { upsert: false });
+
+        if (uploadError) {
+          setMaterialUploadProgress(prev => prev.map((p, idx) => idx === i ? { ...p, status: 'error', error: uploadError.message } : p));
+          hasError = true;
+          continue;
+        }
+
+        const { data: urlData } = supabase.storage.from('course-materials').getPublicUrl(storagePath);
+        const publicUrl = urlData.publicUrl;
+
+        const guessedType: MaterialType = ['ppt', 'pptx', 'key'].includes(ext)
+          ? 'slides'
+          : ['mp4', 'mov', 'avi', 'webm', 'mkv'].includes(ext)
+          ? 'video'
+          : 'document';
+        const fileType: MaterialType = materialForm.type !== 'link' ? materialForm.type : guessedType;
+
+        const baseName = materialForm.title.trim() || file.name.replace(/\.[^.]+$/, '');
+        const title = materialFiles.length > 1 ? `${baseName} — ${file.name}` : baseName;
+
+        const material_id = `mat-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 9)}`;
+        const newMaterial: Material = {
+          material_id,
+          course_id: selectedCourseId,
+          title,
+          type: fileType,
+          week_number: Number(materialForm.week_number),
+          file_url: publicUrl,
+          description: materialForm.description.trim()
+        };
+
+        const { error: insertError } = await supabase.from('materials').insert(newMaterial);
+        if (insertError) {
+          setMaterialUploadProgress(prev => prev.map((p, idx) => idx === i ? { ...p, status: 'error', error: insertError.message } : p));
+          hasError = true;
+          continue;
+        }
+
+        newMaterials.push(newMaterial);
+        setMaterialUploadProgress(prev => prev.map((p, idx) => idx === i ? { ...p, status: 'done' } : p));
+      }
+
+      setMaterials(prev => [...prev, ...newMaterials]);
+      setMaterialUploading(false);
+      if (!hasError) resetMaterialModal();
+      return;
+    }
+
+    // URL mode
+    if (!materialForm.title.trim()) { alert('กรุณากรอกหัวเรื่อง'); return; }
+    const material_id = `mat-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+    const newMaterial: Material = {
+      material_id,
+      course_id: selectedCourseId,
+      title: materialForm.title.trim(),
+      type: materialForm.type,
+      week_number: Number(materialForm.week_number),
+      file_url: materialForm.file_url.trim() || 'https://example.com',
+      description: materialForm.description.trim()
+    };
+    const { error } = await supabase.from('materials').insert(newMaterial);
+    if (error) { alert(`ไม่สามารถเพิ่มเอกสารได้: ${error.message}`); return; }
+    setMaterials([...materials, newMaterial]);
+    resetMaterialModal();
   };
 
   const handleDeleteMaterial = async (materialId: string) => {
@@ -1110,6 +1305,7 @@ export default function App() {
             courses={courses}
             materials={materials}
             assignments={assignments}
+            activities={activities}
             visits={visits}
             submissions={submissions}
             onUpdate={handleUpdateStudentProfile}
@@ -1250,9 +1446,9 @@ export default function App() {
                             <div className="text-left pl-3 ml-1 border-l border-current/20">
                               <span className="flex items-center gap-0.5 text-lg font-black leading-none">
                                 <Eye size={13} className="opacity-80" />
-                                <span>{course.views || 0}</span>
+                                <span>{visits.filter(v => v.course_id === course.course_id).length}</span>
                               </span>
-                              <span className="text-[9px] uppercase font-bold opacity-65">เข้าชม</span>
+                              <span className="text-[9px] uppercase font-bold opacity-65">นักศึกษา</span>
                             </div>
                           </div>
 
@@ -1394,10 +1590,10 @@ export default function App() {
                           </div>
                         </>)}
                         <div className="flex items-center justify-between text-xs pt-2 border-t border-slate-200">
-                          <span className="text-slate-500">จำนวนการเข้าชมสื่อ</span>
+                          <span className="text-slate-500">นักศึกษาที่เข้าเรียน</span>
                           <span className="font-extrabold text-indigo-600 flex items-center gap-1 bg-indigo-50 px-2 py-0.5 rounded-lg border border-indigo-100/50">
                             <Eye size={13} className="text-indigo-500" />
-                            <span>{activeCourse.views || 0} ครั้ง</span>
+                            <span>{visits.filter(v => v.course_id === activeCourse.course_id).length} คน</span>
                           </span>
                         </div>
                       </div>
@@ -1951,35 +2147,53 @@ export default function App() {
                                   )}
                                   {/* Student submit button */}
                                   {role === 'student' && studentProfile && (() => {
-                                    const alreadySubmitted = submissions.some(
+                                    const mySubmission = submissions.find(
                                       s => s.student_id === studentProfile.id && s.assignment_id === assign.assignment_id
                                     );
-                                    return alreadySubmitted ? (
-                                      <div className="flex items-center gap-1.5 mt-2 text-emerald-600 text-xs font-semibold">
-                                        <CheckCircle size={13} />
-                                        <span>ส่งงานแล้ว</span>
+                                    return mySubmission ? (
+                                      <div className="mt-2 space-y-1.5">
+                                        <div className="flex items-center gap-1.5 text-emerald-600 text-xs font-semibold">
+                                          <CheckCircle size={13} />
+                                          <span>ส่งงานแล้ว</span>
+                                          {mySubmission.submitted_at && (
+                                            <span className="text-[10px] text-slate-400 font-normal">
+                                              {new Date(mySubmission.submitted_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                            </span>
+                                          )}
+                                        </div>
+                                        {mySubmission.answer_text && (
+                                          <p className="text-[11px] text-slate-500 bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-1.5 line-clamp-2">
+                                            {mySubmission.answer_text}
+                                          </p>
+                                        )}
+                                        <div className="flex gap-2 flex-wrap">
+                                          {mySubmission.file_url && (
+                                            <a href={mySubmission.file_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[10px] font-semibold text-indigo-600 hover:underline">
+                                              <Paperclip size={10} /> ไฟล์ที่ส่ง
+                                            </a>
+                                          )}
+                                          {mySubmission.link_url && (
+                                            <a href={mySubmission.link_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[10px] font-semibold text-indigo-600 hover:underline">
+                                              <ExternalLink size={10} /> ลิงก์ที่ส่ง
+                                            </a>
+                                          )}
+                                        </div>
                                       </div>
-                                    ) : (
+                                    ) : assign.status === 'open' ? (
                                       <button
-                                        onClick={async () => {
-                                          if (!selectedCourseId) return;
-                                          const submission_id = `sub-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-                                          const newSub: AssignmentSubmission = {
-                                            submission_id,
-                                            student_id: studentProfile.id,
-                                            assignment_id: assign.assignment_id,
-                                            course_id: selectedCourseId,
-                                            submitted_at: new Date().toISOString(),
-                                          };
-                                          const { error } = await supabase.from('assignment_submissions').insert(newSub);
-                                          if (!error) setSubmissions(prev => [newSub, ...prev]);
+                                        onClick={() => {
+                                          setSubmittingAssignment(assign);
+                                          setSubmitForm({ answer_text: '', link_url: '' });
+                                          setSubmitFile(null);
+                                          setSubmitUploadError('');
+                                          setShowSubmitModal(true);
                                         }}
                                         className="mt-2 flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg transition"
                                       >
                                         <Send size={11} />
                                         ส่งงาน
                                       </button>
-                                    );
+                                    ) : null;
                                   })()}
                                 </div>
                               </div>
@@ -2007,7 +2221,7 @@ export default function App() {
                         </div>
                         {role === 'admin' && (
                           <button
-                            onClick={() => { setEditingActivity(null); setActivityForm({ type_id: '', title: '', description: '', duration: '' }); setShowActivityModal(true); }}
+                            onClick={() => { setEditingActivity(null); setActivityForm({ type_id: '', title: '', description: '', duration: '', file_url: '' }); setActivityFile(null); setActivityUploadError(''); setShowActivityModal(true); }}
                             className="flex items-center gap-1.5 text-xs font-bold text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 px-3 py-1.5 rounded-xl transition-all"
                           >
                             <Plus size={14} />
@@ -2042,6 +2256,20 @@ export default function App() {
                                 </div>
                               </div>
                               {act.description && <p className="text-xs text-slate-600 leading-relaxed pl-9">{act.description}</p>}
+                              {act.file_url && (
+                                <div className="pl-9">
+                                  <a
+                                    href={act.file_url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-green-700 hover:text-green-900 bg-green-50 border border-green-100 px-2.5 py-1 rounded-lg transition hover:bg-green-100"
+                                  >
+                                    <Paperclip size={11} />
+                                    ไฟล์แนบ
+                                    <ExternalLink size={10} />
+                                  </a>
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -2480,54 +2708,71 @@ export default function App() {
       {/* 5.3 Material Create/Edit Modal Form */}
       {showMaterialModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-md rounded-3xl border border-slate-200 shadow-xl overflow-hidden animate-in fade-in zoom-in duration-150">
-            {/* Header Form */}
+          <div className="bg-white w-full max-w-lg rounded-3xl border border-slate-200 shadow-xl overflow-hidden animate-in fade-in zoom-in duration-150">
+            {/* Header */}
             <div className="bg-[#4F46E5] text-white p-5 flex items-center justify-between">
               <h3 className="text-sm font-bold">
-                {editingMaterial ? `แก้ไขเอกสาร: ${editingMaterial.title.slice(0, 30)}…` : 'เพิ่มเอกสารการเรียนการสอน (Add Material)'}
+                {editingMaterial ? `แก้ไขเอกสาร: ${editingMaterial.title.slice(0, 30)}…` : 'เพิ่มเอกสารการเรียนการสอน'}
               </h3>
-              <button
-                onClick={() => { setShowMaterialModal(false); setEditingMaterial(null); setMaterialForm({ title: '', type: 'slides', week_number: 1, file_url: '', description: '' }); }}
-                className="p-1.5 rounded-lg hover:bg-white/10 text-white/85 hover:text-white transition"
-              >
+              <button onClick={resetMaterialModal} className="p-1.5 rounded-lg hover:bg-white/10 text-white/85 hover:text-white transition">
                 <X size={15} />
               </button>
             </div>
 
-            {/* Input fields */}
-            <form onSubmit={handleAddMaterial} className="p-6 space-y-4">
+            {/* Mode toggle */}
+            <div className="flex border-b border-slate-100">
+              <button
+                type="button"
+                onClick={() => { setMaterialUploadMode('url'); setMaterialFiles([]); setMaterialUploadProgress([]); }}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold transition ${materialUploadMode === 'url' ? 'bg-indigo-50 text-indigo-700 border-b-2 border-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                <ExternalLink size={12} />
+                ใส่ URL / ลิงก์
+              </button>
+              <button
+                type="button"
+                onClick={() => { setMaterialUploadMode('file'); setMaterialUploadProgress([]); }}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold transition ${materialUploadMode === 'file' ? 'bg-indigo-50 text-indigo-700 border-b-2 border-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                <Upload size={12} />
+                {editingMaterial ? 'เปลี่ยนไฟล์ใหม่' : 'อัปโหลดไฟล์ (หลายไฟล์)'}
+              </button>
+            </div>
+
+            <form onSubmit={handleAddMaterial} className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+
+              {/* Common fields */}
               <div className="space-y-1">
-                <label htmlFor="mat-title" className="block text-xs font-semibold text-slate-700">หัวเรื่องสไลด์การสอน/หัวเรื่องย่อย *</label>
+                <label className="block text-xs font-semibold text-slate-700">
+                  {materialUploadMode === 'file' && !editingMaterial ? 'หัวเรื่องหลัก (ไม่บังคับ — ถ้าว่างจะใช้ชื่อไฟล์)' : 'หัวเรื่องสไลด์การสอน/หัวเรื่องย่อย *'}
+                </label>
                 <input
-                  id="mat-title"
                   type="text"
-                  required
+                  required={materialUploadMode === 'url' || !!editingMaterial}
                   value={materialForm.title}
                   onChange={(e) => setMaterialForm({ ...materialForm, title: e.target.value })}
-                  placeholder="เช่น สไลด์ทบทวน OOP และสัปดาห์ที่ 3"
+                  placeholder={materialUploadMode === 'file' && !editingMaterial ? 'เช่น สัปดาห์ที่ 3 (ระบบจะเพิ่มชื่อไฟล์ให้อัตโนมัติ)' : 'เช่น สไลด์ทบทวน OOP สัปดาห์ที่ 3'}
                   className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <label htmlFor="mat-type" className="block text-xs font-semibold text-slate-700">ประเภทข้อมูล *</label>
+                  <label className="block text-xs font-semibold text-slate-700">ประเภทข้อมูล</label>
                   <select
-                    id="mat-type"
                     value={materialForm.type}
                     onChange={(e) => setMaterialForm({ ...materialForm, type: e.target.value as MaterialType })}
                     className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-2 py-2.5 select-chevron"
                   >
                     <option value="slides">Slides (สไลด์)</option>
-                    <option value="video">Video (วิดีโอ)</option>
                     <option value="document">Document (เอกสาร)</option>
-                    <option value="link">Link (ลิงก์ทั่วไป)</option>
+                    <option value="video">Video (วิดีโอ)</option>
+                    <option value="link">Link (ลิงก์)</option>
                   </select>
                 </div>
                 <div className="space-y-1">
-                  <label htmlFor="mat-week" className="block text-xs font-semibold text-slate-700">สอนรายสัปดาห์ที่</label>
+                  <label className="block text-xs font-semibold text-slate-700">สัปดาห์ที่</label>
                   <input
-                    id="mat-week"
                     type="number"
                     min="1"
                     max="18"
@@ -2538,23 +2783,100 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="space-y-1">
-                <label htmlFor="mat-url" className="block text-xs font-semibold text-slate-700">URL แนบไฟล์/ลิงก์หลักสูตร *</label>
-                <input
-                  id="mat-url"
-                  type="url"
-                  required
-                  value={materialForm.file_url}
-                  onChange={(e) => setMaterialForm({ ...materialForm, file_url: e.target.value })}
-                  placeholder="เช่น https://storage.google.com/myfile.pdf"
-                  className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                />
-              </div>
+              {/* URL mode fields */}
+              {materialUploadMode === 'url' && (
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-slate-700">URL ไฟล์ / ลิงก์ *</label>
+                  <input
+                    type="url"
+                    required
+                    value={materialForm.file_url}
+                    onChange={(e) => setMaterialForm({ ...materialForm, file_url: e.target.value })}
+                    placeholder="เช่น https://drive.google.com/... หรือ https://example.com/file.pdf"
+                    className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  />
+                </div>
+              )}
+
+              {/* File upload mode */}
+              {materialUploadMode === 'file' && (
+                <div className="space-y-3">
+                  {/* Show current file URL for reference when editing */}
+                  {editingMaterial && materialForm.file_url && (
+                    <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl">
+                      <FileIcon size={12} className="text-slate-400 shrink-0" />
+                      <span className="text-[11px] text-slate-500 truncate flex-1">ไฟล์ปัจจุบัน: {materialForm.file_url.split('/').pop()}</span>
+                      <a href={materialForm.file_url} target="_blank" rel="noreferrer" className="text-[10px] text-indigo-500 hover:underline shrink-0">เปิด</a>
+                    </div>
+                  )}
+
+                  {/* Drop zone / file picker */}
+                  <label className="block">
+                    <div className={`border-2 border-dashed rounded-2xl p-5 text-center cursor-pointer transition ${materialFiles.length > 0 ? 'border-indigo-300 bg-indigo-50' : 'border-slate-200 hover:border-indigo-300 hover:bg-slate-50'}`}>
+                      <Upload size={22} className={`mx-auto mb-2 ${materialFiles.length > 0 ? 'text-indigo-500' : 'text-slate-300'}`} />
+                      <p className="text-xs font-semibold text-slate-600">
+                        {materialFiles.length > 0
+                          ? editingMaterial
+                            ? `เลือกแล้ว: ${materialFiles[0].name}`
+                            : `เลือกแล้ว ${materialFiles.length} ไฟล์`
+                          : editingMaterial
+                          ? 'คลิกเพื่อเลือกไฟล์ใหม่ (แทนที่ไฟล์เดิม)'
+                          : 'คลิกเพื่อเลือกไฟล์ (หลายไฟล์พร้อมกันได้)'}
+                      </p>
+                      <p className="text-[10px] text-slate-400 mt-1">PDF, PPT, PPTX, DOCX, XLSX, MP4 และอื่น ๆ</p>
+                      <input
+                        type="file"
+                        multiple={!editingMaterial}
+                        className="hidden"
+                        onChange={(e) => {
+                          const files = Array.from(e.target.files || []);
+                          setMaterialFiles(editingMaterial ? files.slice(0, 1) : files);
+                          setMaterialUploadProgress([]);
+                        }}
+                      />
+                    </div>
+                  </label>
+
+                  {/* File list with status */}
+                  {materialFiles.length > 0 && (
+                    <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                      {materialFiles.map((file, idx) => {
+                        const prog = materialUploadProgress[idx];
+                        return (
+                          <div key={idx} className="flex items-center gap-2 px-3 py-2 bg-slate-50 rounded-xl border border-slate-100">
+                            <FileIcon size={13} className="text-indigo-400 shrink-0" />
+                            <span className="flex-1 text-[11px] text-slate-700 truncate">{file.name}</span>
+                            <span className="text-[10px] text-slate-400 shrink-0">{(file.size / 1024).toFixed(0)} KB</span>
+                            {prog?.status === 'uploading' && <Loader2 size={13} className="text-indigo-500 animate-spin shrink-0" />}
+                            {prog?.status === 'done' && <CheckCircle2 size={13} className="text-emerald-500 shrink-0" />}
+                            {prog?.status === 'error' && (
+                              <span title={prog.error} className="cursor-help">
+                                <AlertCircleIcon size={13} className="text-red-500 shrink-0" />
+                              </span>
+                            )}
+                            {!prog && (
+                              <button type="button" onClick={() => setMaterialFiles(prev => prev.filter((_, i) => i !== idx))} className="text-slate-300 hover:text-red-400 transition shrink-0">
+                                <X size={12} />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Error summary */}
+                  {materialUploadProgress.some(p => p.status === 'error') && (
+                    <div className="text-[11px] text-red-600 bg-red-50 border border-red-100 rounded-xl px-3 py-2">
+                      อัปโหลดไม่สำเร็จ — ตรวจสอบว่าได้สร้าง Storage Bucket "course-materials" ใน Supabase แล้ว
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="space-y-1">
-                <label htmlFor="mat-desc" className="block text-xs font-semibold text-slate-700">อธิบายประกอบเพิ่มเติม (ไม่บังคับ)</label>
+                <label className="block text-xs font-semibold text-slate-700">อธิบายประกอบเพิ่มเติม (ไม่บังคับ)</label>
                 <input
-                  id="mat-desc"
                   type="text"
                   value={materialForm.description}
                   onChange={(e) => setMaterialForm({ ...materialForm, description: e.target.value })}
@@ -2566,16 +2888,27 @@ export default function App() {
               <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => { setShowMaterialModal(false); setEditingMaterial(null); setMaterialForm({ title: '', type: 'slides', week_number: 1, file_url: '', description: '' }); }}
-                  className="text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-medium px-4 py-2.5 rounded-xl transition"
+                  onClick={resetMaterialModal}
+                  disabled={materialUploading}
+                  className="text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-medium px-4 py-2.5 rounded-xl transition disabled:opacity-50"
                 >
                   ย้อนกลับ
                 </button>
                 <button
                   type="submit"
-                  className="text-xs text-white bg-[#4F46E5] hover:bg-indigo-700 font-bold px-5 py-2.5 rounded-xl transition"
+                  disabled={materialUploading || (materialUploadMode === 'file' && materialFiles.length === 0 && !editingMaterial)}
+                  className="flex items-center gap-1.5 text-xs text-white bg-[#4F46E5] hover:bg-indigo-700 font-bold px-5 py-2.5 rounded-xl transition disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {editingMaterial ? 'บันทึกการแก้ไข' : 'ยืนยันบันทึกเอกสาร'}
+                  {materialUploading && <Loader2 size={13} className="animate-spin" />}
+                  {materialUploading
+                    ? 'กำลังอัปโหลด...'
+                    : editingMaterial
+                    ? materialUploadMode === 'file' && materialFiles.length > 0
+                      ? 'บันทึก + เปลี่ยนไฟล์'
+                      : 'บันทึกการแก้ไข'
+                    : materialUploadMode === 'file'
+                    ? `อัปโหลด ${materialFiles.length > 0 ? `${materialFiles.length} ไฟล์` : 'ไฟล์'}`
+                    : 'ยืนยันบันทึกเอกสาร'}
                 </button>
               </div>
             </form>
@@ -2696,7 +3029,7 @@ export default function App() {
                 <Zap size={15} />
                 {editingActivity ? 'แก้ไขกิจกรรม Active Learning' : 'เพิ่มกิจกรรม Active Learning'}
               </h3>
-              <button onClick={() => { setShowActivityModal(false); setEditingActivity(null); }} className="p-1.5 rounded-lg hover:bg-white/10 text-white/80 hover:text-white transition">
+              <button onClick={resetActivityModal} className="p-1.5 rounded-lg hover:bg-white/10 text-white/80 hover:text-white transition">
                 <X size={15} />
               </button>
             </div>
@@ -2714,7 +3047,6 @@ export default function App() {
                     <option key={t.type_id} value={t.type_id}>{t.name}</option>
                   ))}
                 </select>
-                {/* Info panel for selected type */}
                 {activityForm.type_id && (() => {
                   const t = AL_TYPES.find(x => x.type_id === activityForm.type_id);
                   return t ? (
@@ -2725,11 +3057,10 @@ export default function App() {
                   ) : null;
                 })()}
               </div>
-              {/* Custom title override */}
+
+              {/* Title */}
               <div className="space-y-1">
-                <label className="block text-xs font-semibold text-slate-700">
-                  ชื่อกิจกรรม (ปล่อยว่างเพื่อใช้ชื่อประเภท)
-                </label>
+                <label className="block text-xs font-semibold text-slate-700">ชื่อกิจกรรม (ปล่อยว่างเพื่อใช้ชื่อประเภท)</label>
                 <input
                   type="text"
                   value={activityForm.title}
@@ -2738,6 +3069,8 @@ export default function App() {
                   className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-green-500 focus:outline-none"
                 />
               </div>
+
+              {/* Description */}
               <div className="space-y-1">
                 <label className="block text-xs font-semibold text-slate-700">รายละเอียด / วิธีดำเนินกิจกรรม</label>
                 <textarea
@@ -2748,6 +3081,8 @@ export default function App() {
                   className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl p-3 focus:ring-2 focus:ring-green-500 focus:outline-none leading-relaxed"
                 />
               </div>
+
+              {/* Duration */}
               <div className="space-y-1">
                 <label className="block text-xs font-semibold text-slate-700 flex items-center gap-1">
                   <Timer size={12} className="text-slate-400" />
@@ -2761,10 +3096,184 @@ export default function App() {
                   className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-green-500 focus:outline-none"
                 />
               </div>
+
+              {/* File attachment */}
+              <div className="space-y-2 pt-1">
+                <label className="block text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                  <Paperclip size={12} className="text-slate-400" />
+                  ไฟล์แนบ / เอกสารประกอบกิจกรรม (ไม่บังคับ)
+                </label>
+
+                {/* Show existing file when editing */}
+                {editingActivity && activityForm.file_url && !activityFile && (
+                  <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl">
+                    <FileIcon size={12} className="text-green-500 shrink-0" />
+                    <span className="flex-1 text-[11px] text-slate-600 truncate">
+                      ไฟล์ปัจจุบัน: {activityForm.file_url.split('/').pop()}
+                    </span>
+                    <a href={activityForm.file_url} target="_blank" rel="noreferrer" className="text-[10px] text-green-600 hover:underline shrink-0">เปิด</a>
+                    <button
+                      type="button"
+                      onClick={() => setActivityForm(f => ({ ...f, file_url: '' }))}
+                      className="text-slate-300 hover:text-red-400 transition shrink-0"
+                      title="ลบไฟล์แนบ"
+                    >
+                      <X size={11} />
+                    </button>
+                  </div>
+                )}
+
+                {/* File picker */}
+                <label className="block">
+                  <div className={`border-2 border-dashed rounded-2xl p-4 text-center cursor-pointer transition ${activityFile ? 'border-green-300 bg-green-50' : 'border-slate-200 hover:border-green-300 hover:bg-slate-50'}`}>
+                    <Upload size={18} className={`mx-auto mb-1.5 ${activityFile ? 'text-green-500' : 'text-slate-300'}`} />
+                    <p className="text-xs font-semibold text-slate-600">
+                      {activityFile ? activityFile.name : editingActivity && activityForm.file_url ? 'คลิกเพื่อเปลี่ยนไฟล์' : 'คลิกเพื่อแนบไฟล์'}
+                    </p>
+                    {activityFile && (
+                      <p className="text-[10px] text-slate-400 mt-0.5">{(activityFile.size / 1024).toFixed(0)} KB</p>
+                    )}
+                    <p className="text-[10px] text-slate-400 mt-0.5">PDF, PPT, DOCX, รูปภาพ และอื่น ๆ</p>
+                    <input
+                      type="file"
+                      className="hidden"
+                      onChange={e => {
+                        const f = e.target.files?.[0] || null;
+                        setActivityFile(f);
+                        setActivityUploadError('');
+                      }}
+                    />
+                  </div>
+                </label>
+
+                {activityFile && (
+                  <button
+                    type="button"
+                    onClick={() => setActivityFile(null)}
+                    className="text-[11px] text-red-400 hover:text-red-600 transition"
+                  >
+                    ยกเลิกไฟล์ที่เลือก
+                  </button>
+                )}
+
+                {activityUploadError && (
+                  <div className="text-[11px] text-red-600 bg-red-50 border border-red-100 rounded-xl px-3 py-2">
+                    อัปโหลดไม่สำเร็จ: {activityUploadError} — ตรวจสอบว่าสร้าง Bucket "course-materials" ใน Supabase แล้ว
+                  </div>
+                )}
+              </div>
+
               <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-100">
-                <button type="button" onClick={() => { setShowActivityModal(false); setEditingActivity(null); setActivityForm({ type_id: '', title: '', description: '', duration: '' }); }} className="text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-medium px-4 py-2.5 rounded-xl transition">ยกเลิก</button>
-                <button type="submit" className="text-xs text-white bg-green-600 hover:bg-green-700 font-bold px-5 py-2.5 rounded-xl transition">
-                  {editingActivity ? 'บันทึกการแก้ไข' : 'เพิ่มกิจกรรม'}
+                <button type="button" onClick={resetActivityModal} disabled={activityUploading} className="text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-medium px-4 py-2.5 rounded-xl transition disabled:opacity-50">ยกเลิก</button>
+                <button type="submit" disabled={activityUploading} className="flex items-center gap-1.5 text-xs text-white bg-green-600 hover:bg-green-700 font-bold px-5 py-2.5 rounded-xl transition disabled:opacity-50">
+                  {activityUploading && <Loader2 size={13} className="animate-spin" />}
+                  {activityUploading ? 'กำลังอัปโหลด...' : editingActivity ? 'บันทึกการแก้ไข' : 'เพิ่มกิจกรรม'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Student Submit Assignment Modal */}
+      {showSubmitModal && submittingAssignment && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-lg rounded-3xl border border-slate-200 shadow-xl overflow-hidden animate-in fade-in zoom-in duration-150">
+            {/* Header */}
+            <div className="bg-emerald-600 text-white p-5 flex items-center justify-between">
+              <div className="min-w-0">
+                <p className="text-[10px] font-semibold opacity-75 uppercase tracking-widest mb-0.5">ส่งงาน</p>
+                <h3 className="text-sm font-bold truncate">{submittingAssignment.title}</h3>
+              </div>
+              <button onClick={resetSubmitModal} disabled={submitUploading} className="p-1.5 rounded-lg hover:bg-white/10 text-white/80 hover:text-white transition shrink-0">
+                <X size={15} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitAssignment} className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
+              {/* Problem statement */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2">
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">โจทย์ / รายละเอียดงาน</p>
+                <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-line">{submittingAssignment.description}</p>
+                {submittingAssignment.attachment_url && (
+                  <a href={submittingAssignment.attachment_url} target="_blank" rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-pink-700 bg-pink-50 hover:bg-pink-100 border border-pink-100 px-2.5 py-1 rounded-lg transition">
+                    <Paperclip size={11} />
+                    ดาวน์โหลดไฟล์โจทย์
+                  </a>
+                )}
+                <div className="flex items-center gap-2 pt-1 text-[10px] text-slate-400">
+                  <Clock size={10} />
+                  กำหนดส่ง: <span className="font-semibold text-slate-600">{submittingAssignment.due_date}</span>
+                </div>
+              </div>
+
+              {/* Answer textarea */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-semibold text-slate-700">ตอบคำถาม / อธิบายคำตอบ</label>
+                <textarea
+                  rows={5}
+                  value={submitForm.answer_text}
+                  onChange={e => setSubmitForm(f => ({ ...f, answer_text: e.target.value }))}
+                  placeholder="พิมพ์คำตอบหรืออธิบายงานที่ทำที่นี่..."
+                  className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl p-3 focus:ring-2 focus:ring-emerald-500 focus:outline-none leading-relaxed resize-none"
+                />
+              </div>
+
+              {/* File upload */}
+              <div className="space-y-2">
+                <label className="block text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                  <Paperclip size={12} className="text-slate-400" />
+                  แนบไฟล์งาน (ไม่บังคับ)
+                </label>
+                <label className="block">
+                  <div className={`border-2 border-dashed rounded-2xl p-4 text-center cursor-pointer transition ${submitFile ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 hover:border-emerald-300 hover:bg-slate-50'}`}>
+                    <Upload size={18} className={`mx-auto mb-1.5 ${submitFile ? 'text-emerald-500' : 'text-slate-300'}`} />
+                    <p className="text-xs font-semibold text-slate-600">
+                      {submitFile ? submitFile.name : 'คลิกเพื่อเลือกไฟล์งาน'}
+                    </p>
+                    {submitFile && (
+                      <p className="text-[10px] text-slate-400 mt-0.5">{(submitFile.size / 1024).toFixed(0)} KB</p>
+                    )}
+                    <p className="text-[10px] text-slate-400 mt-0.5">PDF, DOCX, รูปภาพ, ZIP และอื่น ๆ</p>
+                    <input type="file" className="hidden" onChange={e => { setSubmitFile(e.target.files?.[0] || null); setSubmitUploadError(''); }} />
+                  </div>
+                </label>
+                {submitFile && (
+                  <button type="button" onClick={() => setSubmitFile(null)} className="text-[11px] text-red-400 hover:text-red-600 transition">
+                    ยกเลิกไฟล์ที่เลือก
+                  </button>
+                )}
+                {submitUploadError && (
+                  <p className="text-[11px] text-red-600 bg-red-50 border border-red-100 rounded-xl px-3 py-2">
+                    อัปโหลดไม่สำเร็จ: {submitUploadError}
+                  </p>
+                )}
+              </div>
+
+              {/* Link */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                  <ExternalLink size={12} className="text-slate-400" />
+                  ลิงก์งาน (ไม่บังคับ — เช่น GitHub, Google Drive, Figma)
+                </label>
+                <input
+                  type="url"
+                  value={submitForm.link_url}
+                  onChange={e => setSubmitForm(f => ({ ...f, link_url: e.target.value }))}
+                  placeholder="https://github.com/..."
+                  className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                <button type="button" onClick={resetSubmitModal} disabled={submitUploading} className="text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-medium px-4 py-2.5 rounded-xl transition disabled:opacity-50">
+                  ยกเลิก
+                </button>
+                <button type="submit" disabled={submitUploading} className="flex items-center gap-1.5 text-xs text-white bg-emerald-600 hover:bg-emerald-700 font-bold px-5 py-2.5 rounded-xl transition disabled:opacity-50">
+                  {submitUploading && <Loader2 size={13} className="animate-spin" />}
+                  {submitUploading ? 'กำลังอัปโหลด...' : 'ยืนยันส่งงาน'}
+                  {!submitUploading && <Send size={13} />}
                 </button>
               </div>
             </form>
