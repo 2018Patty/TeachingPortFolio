@@ -1,19 +1,25 @@
 import React, { useState } from 'react';
-import { X, GraduationCap } from 'lucide-react';
+import { X, GraduationCap, Shield } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { PDPAPrivacyModal } from './PDPAPrivacyModal';
+import { SiteProfile } from '../types';
 
 interface StudentAuthModalProps {
   onClose: () => void;
   initialTab?: 'login' | 'register';
+  siteProfile?: Partial<SiteProfile>;
 }
 
 type AuthTab = 'login' | 'register';
 
-export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({ onClose, initialTab = 'login' }) => {
+export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({ onClose, initialTab = 'login', siteProfile }) => {
   const [tab, setTab] = useState<AuthTab>(initialTab);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
+  const [pdpaConsent, setPdpaConsent] = useState(false);
 
   const [loginForm, setLoginForm] = useState({ email: '', password: '' });
   const [registerForm, setRegisterForm] = useState({
@@ -76,6 +82,10 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({ onClose, ini
       setError('รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร');
       return;
     }
+    if (!pdpaConsent) {
+      setError('กรุณายอมรับนโยบายความเป็นส่วนตัว (PDPA) ก่อนสมัครสมาชิก');
+      return;
+    }
     setLoading(true);
     setError('');
     const { data, error: signUpError } = await supabase.auth.signUp({
@@ -115,6 +125,8 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({ onClose, ini
   };
 
   return (
+    <>
+    {showPrivacyModal && <PDPAPrivacyModal onClose={() => setShowPrivacyModal(false)} siteProfile={siteProfile} />}
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="bg-white w-full max-w-md rounded-3xl border border-slate-200 shadow-xl overflow-hidden animate-in fade-in zoom-in duration-150">
         {/* Header */}
@@ -284,11 +296,35 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({ onClose, ini
                   className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
                 />
               </div>
+              {/* PDPA Consent */}
+              <div className={`rounded-xl border p-3 ${pdpaConsent ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-200'}`}>
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={pdpaConsent}
+                    onChange={e => { setPdpaConsent(e.target.checked); if (error) setError(''); }}
+                    className="mt-0.5 w-3.5 h-3.5 accent-emerald-600 shrink-0"
+                  />
+                  <span className="text-[11px] text-slate-600 leading-relaxed">
+                    ข้าพเจ้ายินยอมให้เก็บรวบรวมและใช้ข้อมูลส่วนบุคคล ตาม{' '}
+                    <button
+                      type="button"
+                      onClick={() => setShowPrivacyModal(true)}
+                      className="text-emerald-600 font-semibold hover:underline inline-flex items-center gap-0.5"
+                    >
+                      <Shield size={10} />
+                      นโยบายความเป็นส่วนตัว (PDPA)
+                    </button>
+                    {' '}เพื่อวัตถุประสงค์ทางการศึกษา
+                  </span>
+                </label>
+              </div>
+
               {error && <p className="text-xs text-red-600 font-medium">{error}</p>}
               <button
                 type="submit"
-                disabled={loading}
-                className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition active:scale-[0.98] disabled:opacity-50"
+                disabled={loading || !pdpaConsent}
+                className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loading ? 'กำลังสมัครสมาชิก...' : 'สมัครสมาชิก'}
               </button>
@@ -307,5 +343,6 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({ onClose, ini
         </div>
       </div>
     </div>
+    </>
   );
 };

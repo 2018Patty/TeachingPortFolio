@@ -263,7 +263,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             onNavigateCourses={onNavigateCourses}
             onSelectCourse={(id) => {
               onSelectCourse(id);
-            }}
+            } as (courseId: string, section?: string) => void}
           />
         ) : selectedCourse ? (
           <CourseDetail

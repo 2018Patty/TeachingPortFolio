@@ -53,6 +53,8 @@ import { DashboardPage } from './components/DashboardPage';
 import { StudentAuthModal } from './components/StudentAuthModal';
 import { StudentProfilePage } from './components/StudentProfilePage';
 import { BackOffice } from './components/BackOffice';
+import { PDPAConsentBanner } from './components/PDPAConsentBanner';
+import { PDPAPrivacyModal } from './components/PDPAPrivacyModal';
 
 import { supabase } from '@/lib/supabase';
 
@@ -93,6 +95,9 @@ export default function App() {
   const [adminPassword, setAdminPassword] = useState('');
   const [loginError, setLoginError] = useState('');
 
+  // PDPA state
+  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
+
   // Student auth state
   const [studentProfile, setStudentProfile] = useState<StudentProfile | null>(null);
   const [showStudentAuthModal, setShowStudentAuthModal] = useState(false);
@@ -119,7 +124,7 @@ export default function App() {
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [submittingAssignment, setSubmittingAssignment] = useState<Assignment | null>(null);
   const [submitForm, setSubmitForm] = useState({ answer_text: '', link_url: '' });
-  const [submitFile, setSubmitFile] = useState<File | null>(null);
+  const [submitFiles, setSubmitFiles] = useState<File[]>([]);
   const [submitUploading, setSubmitUploading] = useState(false);
   const [submitUploadError, setSubmitUploadError] = useState('');
 
@@ -168,9 +173,11 @@ export default function App() {
   const [showActivityModal, setShowActivityModal] = useState(false);
   const [editingActivity, setEditingActivity] = useState<ActiveLearning | null>(null);
   const [activityForm, setActivityForm] = useState({ type_id: '', title: '', description: '', duration: '', file_url: '' });
-  const [activityFile, setActivityFile] = useState<File | null>(null);
+  const [activityFiles, setActivityFiles] = useState<File[]>([]);
   const [activityUploading, setActivityUploading] = useState(false);
   const [activityUploadError, setActivityUploadError] = useState('');
+  const [activityIsAssignment, setActivityIsAssignment] = useState(false);
+  const [activityDueDate, setActivityDueDate] = useState('');
 
 
   // Teaching Reflection state
@@ -257,6 +264,11 @@ export default function App() {
       .upsert({ id: 1, ...data }, { onConflict: 'id' });
     if (error) throw new Error(error.message);
     setSiteProfile((prev: SiteProfile) => ({ ...prev, ...data }));
+  };
+
+  const handleSavePdpa = async (data: Pick<SiteProfile, 'pdpa_purposes' | 'pdpa_retention' | 'pdpa_third_party' | 'pdpa_updated_at' | 'pdpa_effective_date' | 'pdpa_version'>) => {
+    // Bump version on every policy save so all users see the consent banner again
+    await handleSaveProfile({ ...data, pdpa_version: new Date().toISOString() });
   };
 
   const handlePasswordChange = async (oldPw: string, newPw: string): Promise<{ success: boolean; message: string }> => {
@@ -587,9 +599,11 @@ export default function App() {
     setShowActivityModal(false);
     setEditingActivity(null);
     setActivityForm({ type_id: '', title: '', description: '', duration: '', file_url: '' });
-    setActivityFile(null);
+    setActivityFiles([]);
     setActivityUploading(false);
     setActivityUploadError('');
+    setActivityIsAssignment(false);
+    setActivityDueDate('');
   };
 
   // Active Learning Handlers
@@ -602,30 +616,34 @@ export default function App() {
 
     let fileUrl = activityForm.file_url.trim();
 
-    if (activityFile) {
+    if (activityFiles.length > 0) {
       setActivityUploading(true);
       setActivityUploadError('');
-      const safeName = activityFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-      const storagePath = `${selectedCourseId}/al-${Date.now()}_${safeName}`;
-      const { error: uploadError } = await supabase.storage.from('course-materials').upload(storagePath, activityFile, { upsert: false });
-      if (uploadError) {
-        setActivityUploadError(uploadError.message);
-        setActivityUploading(false);
-        return;
+      const uploadedUrls: string[] = [];
+      for (const file of activityFiles) {
+        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const storagePath = `${selectedCourseId}/al-${Date.now()}_${safeName}`;
+        const { error: uploadError } = await supabase.storage.from('course-materials').upload(storagePath, file, { upsert: false });
+        if (uploadError) {
+          setActivityUploadError(uploadError.message);
+          setActivityUploading(false);
+          return;
+        }
+        const { data: urlData } = supabase.storage.from('course-materials').getPublicUrl(storagePath);
+        uploadedUrls.push(urlData.publicUrl);
       }
-      const { data: urlData } = supabase.storage.from('course-materials').getPublicUrl(storagePath);
-      fileUrl = urlData.publicUrl;
+      fileUrl = uploadedUrls.length === 1 ? uploadedUrls[0] : JSON.stringify(uploadedUrls);
       setActivityUploading(false);
     }
 
     if (editingActivity) {
-      const updateData = { type_id: activityForm.type_id, title: resolvedTitle, description: activityForm.description.trim(), duration: activityForm.duration.trim(), file_url: fileUrl };
+      const updateData = { type_id: activityForm.type_id, title: resolvedTitle, description: activityForm.description.trim(), duration: activityForm.duration.trim(), file_url: fileUrl, is_assignment: activityIsAssignment, due_date: activityIsAssignment ? activityDueDate.trim() : null };
       const { error } = await supabase.from('active_learning').update(updateData).eq('activity_id', editingActivity.activity_id);
       if (error) { alert(`ไม่สามารถแก้ไขกิจกรรมได้: ${error.message}`); return; }
       setActivities(activities.map((a: ActiveLearning) => a.activity_id === editingActivity.activity_id ? { ...a, ...updateData } : a));
     } else {
       const activity_id = `al-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-      const newActivity: ActiveLearning = { activity_id, course_id: selectedCourseId, type_id: activityForm.type_id, title: resolvedTitle, description: activityForm.description.trim(), duration: activityForm.duration.trim(), file_url: fileUrl };
+      const newActivity: ActiveLearning = { activity_id, course_id: selectedCourseId, type_id: activityForm.type_id, title: resolvedTitle, description: activityForm.description.trim(), duration: activityForm.duration.trim(), file_url: fileUrl, is_assignment: activityIsAssignment, due_date: activityIsAssignment ? activityDueDate.trim() : undefined };
       const { error } = await supabase.from('active_learning').insert(newActivity);
       if (error) { alert(`ไม่สามารถเพิ่มกิจกรรมได้: ${error.message}`); return; }
       setActivities([...activities, newActivity]);
@@ -643,8 +661,10 @@ export default function App() {
   const handleEditActivityClick = (activity: ActiveLearning) => {
     setEditingActivity(activity);
     setActivityForm({ type_id: activity.type_id || '', title: activity.title, description: activity.description, duration: activity.duration, file_url: activity.file_url || '' });
-    setActivityFile(null);
+    setActivityFiles([]);
     setActivityUploadError('');
+    setActivityIsAssignment(activity.is_assignment || false);
+    setActivityDueDate(activity.due_date || '');
     setShowActivityModal(true);
   };
 
@@ -715,6 +735,17 @@ export default function App() {
       }
     ];
     return palette[index % 4];
+  };
+
+  // Helper: parse file_url that may be JSON array or a single URL string
+  const parseFileUrls = (fileUrl?: string | null): string[] => {
+    if (!fileUrl) return [];
+    try {
+      const parsed = JSON.parse(fileUrl);
+      return Array.isArray(parsed) ? parsed.filter(Boolean) : [fileUrl];
+    } catch {
+      return [fileUrl];
+    }
   };
 
   // Filtered course items
@@ -915,7 +946,7 @@ export default function App() {
     setShowSubmitModal(false);
     setSubmittingAssignment(null);
     setSubmitForm({ answer_text: '', link_url: '' });
-    setSubmitFile(null);
+    setSubmitFiles([]);
     setSubmitUploading(false);
     setSubmitUploadError('');
   };
@@ -924,23 +955,27 @@ export default function App() {
     e.preventDefault();
     if (!submittingAssignment || !selectedCourseId || !studentProfile) return;
 
-    const hasContent = submitForm.answer_text.trim() || submitFile || submitForm.link_url.trim();
+    const hasContent = submitForm.answer_text.trim() || submitFiles.length > 0 || submitForm.link_url.trim();
     if (!hasContent) { alert('กรุณากรอกคำตอบ หรือแนบไฟล์ หรือใส่ลิงก์งาน'); return; }
 
-    let fileUrl = '';
-    if (submitFile) {
+    let fileUrlValue: string | undefined;
+    if (submitFiles.length > 0) {
       setSubmitUploading(true);
       setSubmitUploadError('');
-      const safeName = submitFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-      const storagePath = `submissions/${submittingAssignment.assignment_id}/${studentProfile.id}_${Date.now()}_${safeName}`;
-      const { error: uploadError } = await supabase.storage.from('course-materials').upload(storagePath, submitFile, { upsert: false });
-      if (uploadError) {
-        setSubmitUploadError(uploadError.message);
-        setSubmitUploading(false);
-        return;
+      const uploadedUrls: string[] = [];
+      for (const file of submitFiles) {
+        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const storagePath = `submissions/${submittingAssignment.assignment_id}/${studentProfile.id}_${Date.now()}_${safeName}`;
+        const { error: uploadError } = await supabase.storage.from('course-materials').upload(storagePath, file, { upsert: false });
+        if (uploadError) {
+          setSubmitUploadError(uploadError.message);
+          setSubmitUploading(false);
+          return;
+        }
+        const { data: urlData } = supabase.storage.from('course-materials').getPublicUrl(storagePath);
+        uploadedUrls.push(urlData.publicUrl);
       }
-      const { data: urlData } = supabase.storage.from('course-materials').getPublicUrl(storagePath);
-      fileUrl = urlData.publicUrl;
+      fileUrlValue = uploadedUrls.length === 1 ? uploadedUrls[0] : JSON.stringify(uploadedUrls);
       setSubmitUploading(false);
     }
 
@@ -952,7 +987,7 @@ export default function App() {
       course_id: selectedCourseId,
       submitted_at: new Date().toISOString(),
       answer_text: submitForm.answer_text.trim() || undefined,
-      file_url: fileUrl || undefined,
+      file_url: fileUrlValue,
       link_url: submitForm.link_url.trim() || undefined,
     };
     const { error } = await supabase.from('assignment_submissions').insert(newSub);
@@ -1178,6 +1213,18 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#F8FAFC]">
+      {/* PDPA */}
+      <PDPAConsentBanner
+        onOpenPrivacy={() => setShowPrivacyModal(true)}
+        policyVersion={siteProfile.pdpa_version || ''}
+      />
+      {showPrivacyModal && (
+        <PDPAPrivacyModal
+          onClose={() => setShowPrivacyModal(false)}
+          siteProfile={siteProfile}
+        />
+      )}
+
       {/* 1. Header Navigation */}
       <Navbar
         currentRole={role}
@@ -1264,13 +1311,16 @@ export default function App() {
           questions={questions}
           replies={replies}
           activities={activities}
+          reflections={reflections}
           visits={visits}
           submissions={submissions}
           students={allStudents}
+          siteProfile={siteProfile}
           onNavigateCourses={() => setCurrentPage('courses')}
           onNavigateToCourse={handleBackOfficeNavigateToCourse}
           onEditCourse={handleEditCourseFromBackOffice}
           onAddCourse={handleAddCourseClick}
+          onSavePdpa={handleSavePdpa}
         />
       )}
 
@@ -2167,11 +2217,11 @@ export default function App() {
                                           </p>
                                         )}
                                         <div className="flex gap-2 flex-wrap">
-                                          {mySubmission.file_url && (
-                                            <a href={mySubmission.file_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[10px] font-semibold text-indigo-600 hover:underline">
-                                              <Paperclip size={10} /> ไฟล์ที่ส่ง
+                                          {parseFileUrls(mySubmission.file_url).map((url, fi) => (
+                                            <a key={fi} href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[10px] font-semibold text-indigo-600 hover:underline">
+                                              <Paperclip size={10} /> ไฟล์ {fi + 1}
                                             </a>
-                                          )}
+                                          ))}
                                           {mySubmission.link_url && (
                                             <a href={mySubmission.link_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[10px] font-semibold text-indigo-600 hover:underline">
                                               <ExternalLink size={10} /> ลิงก์ที่ส่ง
@@ -2184,7 +2234,7 @@ export default function App() {
                                         onClick={() => {
                                           setSubmittingAssignment(assign);
                                           setSubmitForm({ answer_text: '', link_url: '' });
-                                          setSubmitFile(null);
+                                          setSubmitFiles([]);
                                           setSubmitUploadError('');
                                           setShowSubmitModal(true);
                                         }}
@@ -2206,6 +2256,124 @@ export default function App() {
                           <div className="text-xs">ยังไม่มีงานมอบหมายหรือการทดสอบใด ๆ ในคอร์สนี้</div>
                         </div>
                       )}
+
+                      {/* AL-based assignments section */}
+                      {activeCourseActivities.filter(a => a.is_assignment).length > 0 && (
+                        <div className="space-y-4 pt-2">
+                          <div className="flex items-center gap-2 border-t border-slate-100 pt-4">
+                            <Zap size={14} className="text-green-500" />
+                            <h4 className="text-xs font-bold text-slate-700">งานมอบหมายจาก Active Learning</h4>
+                            <span className="text-[10px] font-bold text-green-700 bg-green-50 border border-green-100 px-2 py-0.5 rounded-full">
+                              {activeCourseActivities.filter(a => a.is_assignment).length} รายการ
+                            </span>
+                          </div>
+                          {activeCourseActivities.filter(a => a.is_assignment).map(act => {
+                            const isDue = act.due_date ? new Date(act.due_date) < new Date() : false;
+                            const alType = AL_TYPES.find(t => t.type_id === act.type_id);
+                            const mySubmission = role === 'student' && studentProfile
+                              ? submissions.find(s => s.student_id === studentProfile.id && s.assignment_id === act.activity_id)
+                              : null;
+                            return (
+                              <div key={act.activity_id} className="border border-green-200 rounded-2xl p-4 sm:p-5 flex flex-col gap-4 bg-green-50/30 hover:border-green-300 transition shadow-sm">
+                                <div className="space-y-2.5">
+                                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-green-100 pb-2.5">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-green-700 bg-green-100 border border-green-200 px-2 py-0.5 rounded-lg">
+                                        <Zap size={9} />
+                                        Active Learning
+                                      </span>
+                                      {alType && (
+                                        <span className="text-[10px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-lg">{alType.name}</span>
+                                      )}
+                                      {isDue ? (
+                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-red-700 bg-red-50 border border-red-100 px-2.5 py-1 rounded-lg">
+                                          <AlertCircle size={9} />
+                                          หมดเวลาแล้ว
+                                        </span>
+                                      ) : (
+                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-lg">
+                                          <CheckCircle size={9} />
+                                          เปิดรับงาน
+                                        </span>
+                                      )}
+                                    </div>
+                                    {act.due_date && (
+                                      <div className="flex items-center gap-1 text-xs text-slate-500 font-medium">
+                                        <Clock size={12} />
+                                        <span>กำหนดส่ง: <b className="text-slate-800 font-semibold">{act.due_date}</b></span>
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    <h4 className="text-xs font-extrabold text-slate-900 tracking-tight">{act.title}</h4>
+                                    <p className="text-[11px] text-slate-600 leading-relaxed">{act.description}</p>
+                                  </div>
+                                  {act.duration && (
+                                    <div className="flex items-center gap-1 text-[10px] text-slate-500">
+                                      <Timer size={10} />
+                                      <span>{act.duration}</span>
+                                    </div>
+                                  )}
+                                </div>
+
+                                <div className="flex items-center justify-between pt-2 border-t border-green-100 text-xs font-semibold">
+                                  {act.file_url ? (
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {parseFileUrls(act.file_url).map((url, fi) => (
+                                        <a key={fi} href={url} target="_blank" rel="noopener noreferrer"
+                                          className="inline-flex items-center gap-1 text-[11px] font-bold text-green-700 bg-green-50 hover:bg-green-100 px-3 py-1.5 rounded-lg border border-green-200 transition">
+                                          <Paperclip size={12} />
+                                          ไฟล์ {fi + 1}
+                                        </a>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <span className="text-[10px] text-slate-400 italic">ไม่มีไฟล์แนบ</span>
+                                  )}
+                                  {role === 'admin' && (
+                                    <button
+                                      onClick={() => handleEditActivityClick(act)}
+                                      className="flex items-center gap-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 px-2 py-1.5 rounded-lg transition text-[11px]"
+                                    >
+                                      <Edit size={13} />
+                                      แก้ไข
+                                    </button>
+                                  )}
+                                  {role === 'student' && studentProfile && (
+                                    mySubmission ? (
+                                      <div className="space-y-1">
+                                        <div className="flex items-center gap-1.5 text-emerald-600 text-xs font-semibold">
+                                          <CheckCircle size={13} />
+                                          <span>ส่งงานแล้ว</span>
+                                          {mySubmission.submitted_at && (
+                                            <span className="text-[10px] text-slate-400 font-normal">
+                                              {new Date(mySubmission.submitted_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    ) : !isDue ? (
+                                      <button
+                                        onClick={() => {
+                                          setSubmittingAssignment({ assignment_id: act.activity_id, course_id: act.course_id, title: act.title, description: act.description, due_date: act.due_date || '', status: 'open' });
+                                          setSubmitForm({ answer_text: '', link_url: '' });
+                                          setSubmitFiles([]);
+                                          setSubmitUploadError('');
+                                          setShowSubmitModal(true);
+                                        }}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg transition"
+                                      >
+                                        <Send size={11} />
+                                        ส่งงาน
+                                      </button>
+                                    ) : null
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   )}
                   {/* Active Learning Tab */}
@@ -2221,7 +2389,7 @@ export default function App() {
                         </div>
                         {role === 'admin' && (
                           <button
-                            onClick={() => { setEditingActivity(null); setActivityForm({ type_id: '', title: '', description: '', duration: '', file_url: '' }); setActivityFile(null); setActivityUploadError(''); setShowActivityModal(true); }}
+                            onClick={() => { setEditingActivity(null); setActivityForm({ type_id: '', title: '', description: '', duration: '', file_url: '' }); setActivityFiles([]); setActivityIsAssignment(false); setActivityDueDate(''); setActivityUploadError(''); setShowActivityModal(true); }}
                             className="flex items-center gap-1.5 text-xs font-bold text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 px-3 py-1.5 rounded-xl transition-all"
                           >
                             <Plus size={14} />
@@ -2257,17 +2425,20 @@ export default function App() {
                               </div>
                               {act.description && <p className="text-xs text-slate-600 leading-relaxed pl-9">{act.description}</p>}
                               {act.file_url && (
-                                <div className="pl-9">
-                                  <a
-                                    href={act.file_url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-green-700 hover:text-green-900 bg-green-50 border border-green-100 px-2.5 py-1 rounded-lg transition hover:bg-green-100"
-                                  >
-                                    <Paperclip size={11} />
-                                    ไฟล์แนบ
-                                    <ExternalLink size={10} />
-                                  </a>
+                                <div className="pl-9 flex flex-wrap gap-1.5">
+                                  {parseFileUrls(act.file_url).map((url, fi) => (
+                                    <a
+                                      key={fi}
+                                      href={url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-green-700 hover:text-green-900 bg-green-50 border border-green-100 px-2.5 py-1 rounded-lg transition hover:bg-green-100"
+                                    >
+                                      <Paperclip size={11} />
+                                      ไฟล์ {fi + 1}
+                                      <ExternalLink size={10} />
+                                    </a>
+                                  ))}
                                 </div>
                               )}
                             </div>
@@ -2300,6 +2471,7 @@ export default function App() {
         faculty={siteProfile.profile_faculty}
         university={siteProfile.profile_university}
         bio={siteProfile.profile_bio}
+        onOpenPrivacy={() => setShowPrivacyModal(true)}
       />
 
       {/* ========================================================== */}
@@ -2379,6 +2551,7 @@ export default function App() {
       {showStudentAuthModal && (
         <StudentAuthModal
           initialTab={studentAuthInitialTab}
+          siteProfile={siteProfile}
           onClose={() => {
             setShowStudentAuthModal(false);
             setPendingCourseId(null);
@@ -3097,6 +3270,38 @@ export default function App() {
                 />
               </div>
 
+              {/* Is Assignment checkbox */}
+              <div className="pt-1">
+                <label className="flex items-center gap-3 cursor-pointer group">
+                  <div className="relative">
+                    <input
+                      type="checkbox"
+                      className="sr-only peer"
+                      checked={activityIsAssignment}
+                      onChange={e => setActivityIsAssignment(e.target.checked)}
+                    />
+                    <div className="w-10 h-5 bg-slate-200 peer-checked:bg-green-500 rounded-full transition-colors peer-focus:ring-2 peer-focus:ring-green-400 peer-focus:ring-offset-1" />
+                    <div className="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-5" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold text-slate-700 group-has-[input:checked]:text-green-700">เป็นงานมอบหมายด้วย</div>
+                    <div className="text-[10px] text-slate-400">กิจกรรมนี้จะแสดงในแท็บ "งานมอบหมาย" ด้วย</div>
+                  </div>
+                </label>
+
+                {activityIsAssignment && (
+                  <div className="mt-3 space-y-1">
+                    <label className="block text-xs font-semibold text-slate-700">กำหนดส่ง (ไม่บังคับ)</label>
+                    <input
+                      type="date"
+                      value={activityDueDate}
+                      onChange={e => setActivityDueDate(e.target.value)}
+                      className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-green-500 focus:outline-none"
+                    />
+                  </div>
+                )}
+              </div>
+
               {/* File attachment */}
               <div className="space-y-2 pt-1">
                 <label className="block text-xs font-semibold text-slate-700 flex items-center gap-1.5">
@@ -3105,55 +3310,54 @@ export default function App() {
                 </label>
 
                 {/* Show existing file when editing */}
-                {editingActivity && activityForm.file_url && !activityFile && (
-                  <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl">
-                    <FileIcon size={12} className="text-green-500 shrink-0" />
-                    <span className="flex-1 text-[11px] text-slate-600 truncate">
-                      ไฟล์ปัจจุบัน: {activityForm.file_url.split('/').pop()}
-                    </span>
-                    <a href={activityForm.file_url} target="_blank" rel="noreferrer" className="text-[10px] text-green-600 hover:underline shrink-0">เปิด</a>
-                    <button
-                      type="button"
-                      onClick={() => setActivityForm(f => ({ ...f, file_url: '' }))}
-                      className="text-slate-300 hover:text-red-400 transition shrink-0"
-                      title="ลบไฟล์แนบ"
-                    >
-                      <X size={11} />
+                {/* Existing files when editing */}
+                {editingActivity && activityForm.file_url && activityFiles.length === 0 && (
+                  <div className="space-y-1">
+                    {parseFileUrls(activityForm.file_url).map((url, i) => (
+                      <div key={i} className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl">
+                        <FileIcon size={12} className="text-green-500 shrink-0" />
+                        <span className="flex-1 text-[11px] text-slate-600 truncate">ไฟล์ {i + 1}: {url.split('/').pop()}</span>
+                        <a href={url} target="_blank" rel="noreferrer" className="text-[10px] text-green-600 hover:underline shrink-0">เปิด</a>
+                      </div>
+                    ))}
+                    <button type="button" onClick={() => setActivityForm(f => ({ ...f, file_url: '' }))} className="text-[10px] text-red-400 hover:text-red-600 transition">
+                      ลบไฟล์เดิมทั้งหมด
                     </button>
                   </div>
                 )}
 
-                {/* File picker */}
+                {/* File picker — multiple */}
                 <label className="block">
-                  <div className={`border-2 border-dashed rounded-2xl p-4 text-center cursor-pointer transition ${activityFile ? 'border-green-300 bg-green-50' : 'border-slate-200 hover:border-green-300 hover:bg-slate-50'}`}>
-                    <Upload size={18} className={`mx-auto mb-1.5 ${activityFile ? 'text-green-500' : 'text-slate-300'}`} />
+                  <div className={`border-2 border-dashed rounded-2xl p-4 text-center cursor-pointer transition ${activityFiles.length > 0 ? 'border-green-300 bg-green-50' : 'border-slate-200 hover:border-green-300 hover:bg-slate-50'}`}>
+                    <Upload size={18} className={`mx-auto mb-1.5 ${activityFiles.length > 0 ? 'text-green-500' : 'text-slate-300'}`} />
                     <p className="text-xs font-semibold text-slate-600">
-                      {activityFile ? activityFile.name : editingActivity && activityForm.file_url ? 'คลิกเพื่อเปลี่ยนไฟล์' : 'คลิกเพื่อแนบไฟล์'}
+                      {activityFiles.length > 0 ? `เลือกแล้ว ${activityFiles.length} ไฟล์` : 'คลิกเพื่อแนบไฟล์ (เลือกหลายไฟล์ได้)'}
                     </p>
-                    {activityFile && (
-                      <p className="text-[10px] text-slate-400 mt-0.5">{(activityFile.size / 1024).toFixed(0)} KB</p>
-                    )}
                     <p className="text-[10px] text-slate-400 mt-0.5">PDF, PPT, DOCX, รูปภาพ และอื่น ๆ</p>
                     <input
                       type="file"
+                      multiple
                       className="hidden"
                       onChange={e => {
-                        const f = e.target.files?.[0] || null;
-                        setActivityFile(f);
+                        setActivityFiles(Array.from(e.target.files || []));
                         setActivityUploadError('');
                       }}
                     />
                   </div>
                 </label>
 
-                {activityFile && (
-                  <button
-                    type="button"
-                    onClick={() => setActivityFile(null)}
-                    className="text-[11px] text-red-400 hover:text-red-600 transition"
-                  >
-                    ยกเลิกไฟล์ที่เลือก
-                  </button>
+                {activityFiles.length > 0 && (
+                  <div className="space-y-1">
+                    {activityFiles.map((f, i) => (
+                      <div key={i} className="flex items-center gap-2 px-2 py-1 bg-green-50 border border-green-100 rounded-lg text-[11px] text-slate-600">
+                        <FileIcon size={10} className="text-green-500 shrink-0" />
+                        <span className="truncate flex-1">{f.name}</span>
+                        <span className="text-slate-400 shrink-0">{(f.size / 1024).toFixed(0)} KB</span>
+                        <button type="button" onClick={() => setActivityFiles(prev => prev.filter((_, j) => j !== i))} className="text-slate-300 hover:text-red-400 transition shrink-0"><X size={10} /></button>
+                      </div>
+                    ))}
+                    <button type="button" onClick={() => setActivityFiles([])} className="text-[10px] text-red-400 hover:text-red-600 transition">ยกเลิกทั้งหมด</button>
+                  </div>
                 )}
 
                 {activityUploadError && (
@@ -3227,22 +3431,27 @@ export default function App() {
                   แนบไฟล์งาน (ไม่บังคับ)
                 </label>
                 <label className="block">
-                  <div className={`border-2 border-dashed rounded-2xl p-4 text-center cursor-pointer transition ${submitFile ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 hover:border-emerald-300 hover:bg-slate-50'}`}>
-                    <Upload size={18} className={`mx-auto mb-1.5 ${submitFile ? 'text-emerald-500' : 'text-slate-300'}`} />
+                  <div className={`border-2 border-dashed rounded-2xl p-4 text-center cursor-pointer transition ${submitFiles.length > 0 ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 hover:border-emerald-300 hover:bg-slate-50'}`}>
+                    <Upload size={18} className={`mx-auto mb-1.5 ${submitFiles.length > 0 ? 'text-emerald-500' : 'text-slate-300'}`} />
                     <p className="text-xs font-semibold text-slate-600">
-                      {submitFile ? submitFile.name : 'คลิกเพื่อเลือกไฟล์งาน'}
+                      {submitFiles.length > 0 ? `เลือกแล้ว ${submitFiles.length} ไฟล์` : 'คลิกเพื่อเลือกไฟล์งาน (เลือกหลายไฟล์ได้)'}
                     </p>
-                    {submitFile && (
-                      <p className="text-[10px] text-slate-400 mt-0.5">{(submitFile.size / 1024).toFixed(0)} KB</p>
-                    )}
                     <p className="text-[10px] text-slate-400 mt-0.5">PDF, DOCX, รูปภาพ, ZIP และอื่น ๆ</p>
-                    <input type="file" className="hidden" onChange={e => { setSubmitFile(e.target.files?.[0] || null); setSubmitUploadError(''); }} />
+                    <input type="file" multiple className="hidden" onChange={e => { setSubmitFiles(Array.from(e.target.files || [])); setSubmitUploadError(''); }} />
                   </div>
                 </label>
-                {submitFile && (
-                  <button type="button" onClick={() => setSubmitFile(null)} className="text-[11px] text-red-400 hover:text-red-600 transition">
-                    ยกเลิกไฟล์ที่เลือก
-                  </button>
+                {submitFiles.length > 0 && (
+                  <div className="space-y-1">
+                    {submitFiles.map((f, i) => (
+                      <div key={i} className="flex items-center gap-2 px-2 py-1 bg-emerald-50 border border-emerald-100 rounded-lg text-[11px] text-slate-600">
+                        <FileIcon size={10} className="text-emerald-500 shrink-0" />
+                        <span className="truncate flex-1">{f.name}</span>
+                        <span className="text-slate-400 shrink-0">{(f.size / 1024).toFixed(0)} KB</span>
+                        <button type="button" onClick={() => setSubmitFiles(prev => prev.filter((_, j) => j !== i))} className="text-slate-300 hover:text-red-400 transition shrink-0"><X size={10} /></button>
+                      </div>
+                    ))}
+                    <button type="button" onClick={() => setSubmitFiles([])} className="text-[10px] text-red-400 hover:text-red-600 transition">ยกเลิกทั้งหมด</button>
+                  </div>
                 )}
                 {submitUploadError && (
                   <p className="text-[11px] text-red-600 bg-red-50 border border-red-100 rounded-xl px-3 py-2">

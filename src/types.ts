@@ -25,6 +25,13 @@ export interface SiteProfile {
   profile_photo_url: string;
   profile_link_url: string;
   admin_password: string;
+  // PDPA settings
+  pdpa_purposes?: string;       // JSON array of purpose strings
+  pdpa_retention?: string;      // retention period description
+  pdpa_third_party?: string;    // third-party disclosure info
+  pdpa_updated_at?: string;     // e.g. "มิถุนายน 2026"
+  pdpa_effective_date?: string; // e.g. "1 มิถุนายน 2026"
+  pdpa_version?: string;        // ISO timestamp — bumped on every admin save
 }
 
 export type MaterialType = 'slides' | 'video' | 'document' | 'link';
@@ -133,6 +140,8 @@ export interface ActiveLearning {
   description: string;
   duration: string;
   file_url?: string;
+  is_assignment?: boolean;
+  due_date?: string;
   created_at?: string;
 }
 

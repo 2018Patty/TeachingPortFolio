@@ -743,17 +743,25 @@ export const StudentProfilePage: React.FC<Props> = ({
                           )}
 
                           {act.file_url && (
-                            <div className="pl-11">
-                              <a
-                                href={act.file_url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-green-700 bg-green-50 hover:bg-green-100 border border-green-100 px-2.5 py-1 rounded-lg transition"
-                              >
-                                <Paperclip size={11} />
-                                ไฟล์แนบ
-                                <ExternalLink size={10} />
-                              </a>
+                            <div className="pl-11 flex flex-wrap gap-1.5">
+                              {(() => {
+                                try {
+                                  const p = JSON.parse(act.file_url!);
+                                  return Array.isArray(p) ? p.filter(Boolean) : [act.file_url!];
+                                } catch { return [act.file_url!]; }
+                              })().map((url: string, fi: number) => (
+                                <a
+                                  key={fi}
+                                  href={url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-green-700 bg-green-50 hover:bg-green-100 border border-green-100 px-2.5 py-1 rounded-lg transition"
+                                >
+                                  <Paperclip size={11} />
+                                  ไฟล์ {fi + 1}
+                                  <ExternalLink size={10} />
+                                </a>
+                              ))}
                             </div>
                           )}
                         </div>

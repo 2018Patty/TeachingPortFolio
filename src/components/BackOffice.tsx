@@ -3,13 +3,15 @@ import {
   LayoutDashboard, BookOpen, Users, Target, FileText, Zap,
   MessageSquare, ClipboardList, ChevronDown, ChevronRight,
   Eye, Edit3, ExternalLink, Clock, CheckCircle, TrendingUp,
-  GraduationCap, CalendarDays, ArrowRight, Plus,
+  GraduationCap, CalendarDays, ArrowRight, Plus, X, Link as LinkIcon,
+  FileDown, AlignLeft, Shield, Save, RefreshCw, Trash2,
 } from 'lucide-react';
 import {
   Course, Material, Assignment, Question, Reply, ActiveLearning,
-  StudentProfile, StudentCourseVisit, AssignmentSubmission,
+  StudentProfile, StudentCourseVisit, AssignmentSubmission, SiteProfile,
 } from '../types';
 import { DashboardPage } from './DashboardPage';
+import { PDPAPrivacyModal } from './PDPAPrivacyModal';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -19,7 +21,8 @@ type CourseSection =
 
 type BoView =
   | { type: 'dashboard' }
-  | { type: 'course'; courseId: string; section: CourseSection };
+  | { type: 'course'; courseId: string; section: CourseSection }
+  | { type: 'pdpa' };
 
 interface BackOfficeProps {
   courses: Course[];
@@ -28,13 +31,16 @@ interface BackOfficeProps {
   questions: Question[];
   replies: Reply[];
   activities: ActiveLearning[];
+  reflections: import('../types').TeachingReflection[];
   visits: StudentCourseVisit[];
   submissions: AssignmentSubmission[];
   students: StudentProfile[];
+  siteProfile: SiteProfile;
   onNavigateCourses: () => void;
   onNavigateToCourse: (courseId: string, tab: string) => void;
   onEditCourse: (course: Course) => void;
   onAddCourse: () => void;
+  onSavePdpa: (data: Pick<SiteProfile, 'pdpa_purposes' | 'pdpa_retention' | 'pdpa_third_party' | 'pdpa_updated_at' | 'pdpa_effective_date' | 'pdpa_version'>) => Promise<void>;
 }
 
 // ─── Sidebar section config ───────────────────────────────────────────────────
@@ -66,6 +72,206 @@ function avatarCfg(seed: string) {
   return { icon: FA_ICONS[abs % FA_ICONS.length], color: AVATAR_COLORS[(abs >> 4) % AVATAR_COLORS.length] };
 }
 
+// ─── Student Detail Modal ─────────────────────────────────────────────────────
+
+const StudentDetailModal: React.FC<{
+  studentId: string;
+  student: StudentProfile | undefined;
+  visits: StudentCourseVisit[];
+  submissions: AssignmentSubmission[];
+  assignments: Assignment[];
+  onClose: () => void;
+}> = ({ studentId, student, visits, submissions, assignments, onClose }) => {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const cfg = avatarCfg(studentId);
+  const name = student
+    ? `${student.first_name} ${student.last_name}`.trim() || student.email
+    : studentId.slice(0, 8) + '...';
+  const visitCount = visits.filter(v => v.student_id === studentId).length;
+  const lastVisit = visits
+    .filter(v => v.student_id === studentId)
+    .sort((a, b) => (b.visited_at || '').localeCompare(a.visited_at || ''))
+    .at(0);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4"
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="bg-white w-full max-w-2xl rounded-3xl border border-slate-200 shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3">
+            <div
+              className="w-10 h-10 rounded-xl flex items-center justify-center text-white shadow"
+              style={{ background: cfg.color }}
+            >
+              <i className={`fa-solid ${cfg.icon} text-sm`} />
+            </div>
+            <div>
+              <div className="font-extrabold text-sm">{name}</div>
+              <div className="text-[11px] text-slate-400 mt-0.5">
+                {student?.student_id && <span className="font-mono">{student.student_id}</span>}
+                {student?.email && <span className="ml-2">{student.email}</span>}
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 rounded-xl hover:bg-white/10 text-white/70 hover:text-white transition"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Stat row */}
+        <div className="grid grid-cols-3 gap-3 px-6 py-4 border-b border-slate-100 shrink-0">
+          <div className="text-center">
+            <div className="text-xl font-extrabold text-blue-600">{visitCount}</div>
+            <div className="text-[10px] text-slate-500 mt-0.5">ครั้งที่เข้าชม</div>
+          </div>
+          <div className="text-center">
+            <div className="text-xl font-extrabold text-emerald-600">{submissions.length}</div>
+            <div className="text-[10px] text-slate-500 mt-0.5">งานที่ส่งแล้ว</div>
+          </div>
+          <div className="text-center">
+            <div className="text-xl font-extrabold text-amber-600">{assignments.length - submissions.length < 0 ? 0 : assignments.length - submissions.length}</div>
+            <div className="text-[10px] text-slate-500 mt-0.5">งานที่ยังไม่ส่ง</div>
+          </div>
+        </div>
+
+        {/* Assignment list */}
+        <div className="overflow-y-auto flex-1 p-6 space-y-3">
+          <p className="text-xs font-bold text-slate-600 flex items-center gap-1.5">
+            <ClipboardList size={13} className="text-slate-400" />
+            งานมอบหมายทั้งหมด ({assignments.length} รายการ)
+          </p>
+          {assignments.length === 0 && (
+            <p className="text-xs text-slate-400 italic text-center py-6">ยังไม่มีงานมอบหมายในวิชานี้</p>
+          )}
+          {assignments.map(assign => {
+            const sub = submissions.find(s => s.assignment_id === assign.assignment_id);
+            const isExpanded = expandedId === assign.assignment_id;
+
+            return (
+              <div
+                key={assign.assignment_id}
+                className={`rounded-2xl border overflow-hidden transition-all ${
+                  sub
+                    ? 'border-emerald-200 bg-emerald-50/40'
+                    : 'border-slate-200 bg-slate-50/40'
+                }`}
+              >
+                {/* Assignment header — clickable when submitted */}
+                <div
+                  className={`flex items-start justify-between gap-2 p-4 ${sub ? 'cursor-pointer hover:bg-emerald-50 transition-colors' : ''}`}
+                  onClick={() => sub && setExpandedId(isExpanded ? null : assign.assignment_id)}
+                >
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-slate-800 truncate">{assign.title}</div>
+                    <div className="text-[10px] text-slate-400 mt-0.5">กำหนดส่ง {assign.due_date}</div>
+                    {sub?.submitted_at && (
+                      <div className="text-[10px] text-emerald-600 mt-0.5">
+                        ส่งเมื่อ {new Date(sub.submitted_at).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' })}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      sub ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
+                    }`}>
+                      <CheckCircle size={9} />
+                      {sub ? 'ส่งแล้ว' : 'ยังไม่ส่ง'}
+                    </span>
+                    {sub && (
+                      <ChevronDown
+                        size={13}
+                        className={`text-emerald-500 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                      />
+                    )}
+                  </div>
+                </div>
+
+                {/* Submission content — expanded only */}
+                {sub && isExpanded && (
+                  <div className="px-4 pb-4 space-y-2 border-t border-emerald-100">
+                    {!sub.answer_text && !sub.file_url && !sub.link_url && !sub.note && (
+                      <p className="text-[11px] text-slate-400 italic pt-3">ไม่มีเนื้อหาการส่งงาน (อาจส่งผ่านช่องทางอื่น)</p>
+                    )}
+                    {sub.answer_text && (
+                      <div className="bg-white border border-slate-200 rounded-xl px-3 py-2.5 space-y-1 mt-3">
+                        <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500">
+                          <AlignLeft size={10} />
+                          คำตอบ
+                        </div>
+                        <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">{sub.answer_text}</p>
+                      </div>
+                    )}
+                    {sub.file_url && (() => {
+                      const urls: string[] = (() => {
+                        try {
+                          const p = JSON.parse(sub.file_url!);
+                          return Array.isArray(p) ? p.filter(Boolean) : [sub.file_url!];
+                        } catch { return [sub.file_url!]; }
+                      })();
+                      return (
+                        <div className="flex flex-wrap gap-2">
+                          {urls.map((url, fi) => (
+                            <a
+                              key={fi}
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-2 text-xs font-semibold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-100 rounded-xl px-3 py-2 transition w-fit"
+                            >
+                              <FileDown size={12} />
+                              ไฟล์ {fi + 1}
+                            </a>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                    {sub.link_url && (
+                      <a
+                        href={sub.link_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-2 text-xs font-semibold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 rounded-xl px-3 py-2 transition w-fit"
+                      >
+                        <LinkIcon size={12} />
+                        <span className="truncate max-w-[260px]">{sub.link_url}</span>
+                      </a>
+                    )}
+                    {sub.note && (
+                      <p className="text-[11px] text-slate-500 italic">หมายเหตุ: {sub.note}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-3 border-t border-slate-100 bg-slate-50/60 shrink-0 text-right">
+          {lastVisit?.visited_at && (
+            <span className="text-[10px] text-slate-400 mr-auto float-left">
+              เข้าชมล่าสุด: {new Date(lastVisit.visited_at).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' })}
+            </span>
+          )}
+          <button
+            onClick={onClose}
+            className="px-5 py-2 text-xs font-bold bg-slate-800 hover:bg-slate-900 text-white rounded-xl transition"
+          >
+            ปิด
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── Student List Section ─────────────────────────────────────────────────────
 
 const StudentsSection: React.FC<{
@@ -74,7 +280,8 @@ const StudentsSection: React.FC<{
   submissions: AssignmentSubmission[];
   assignments: Assignment[];
   students: StudentProfile[];
-}> = ({ course, visits, submissions, assignments, students }) => {
+  onSelectStudent: (sid: string) => void;
+}> = ({ course, visits, submissions, assignments, students, onSelectStudent }) => {
   const courseVisits = visits.filter(v => v.course_id === course.course_id);
   const courseSubmissions = submissions.filter(s => s.course_id === course.course_id);
 
@@ -103,117 +310,118 @@ const StudentsSection: React.FC<{
 
   return (
     <div className="space-y-4">
-      {/* Summary */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm text-center">
-          <div className="text-2xl font-extrabold text-indigo-600">{rows.length}</div>
-          <div className="text-xs text-slate-500 mt-0.5">นักศึกษาทั้งหมด</div>
+        {/* Summary */}
+        <div className="grid grid-cols-3 gap-4">
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm text-center">
+            <div className="text-2xl font-extrabold text-indigo-600">{rows.length}</div>
+            <div className="text-xs text-slate-500 mt-0.5">นักศึกษาทั้งหมด</div>
+          </div>
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm text-center">
+            <div className="text-2xl font-extrabold text-emerald-600">{courseVisits.length}</div>
+            <div className="text-xs text-slate-500 mt-0.5">ครั้งการเข้าชมรวม</div>
+          </div>
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm text-center">
+            <div className="text-2xl font-extrabold text-amber-600">{courseSubmissions.length}</div>
+            <div className="text-xs text-slate-500 mt-0.5">งานที่ส่งแล้ว</div>
+          </div>
         </div>
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm text-center">
-          <div className="text-2xl font-extrabold text-emerald-600">{courseVisits.length}</div>
-          <div className="text-xs text-slate-500 mt-0.5">ครั้งการเข้าชมรวม</div>
-        </div>
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm text-center">
-          <div className="text-2xl font-extrabold text-amber-600">{courseSubmissions.length}</div>
-          <div className="text-xs text-slate-500 mt-0.5">งานที่ส่งแล้ว</div>
+
+        {/* Student table */}
+        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-slate-100 flex items-center gap-2">
+            <Users size={14} className="text-slate-500" />
+            <span className="text-xs font-bold text-slate-700">รายชื่อนักศึกษา</span>
+            <span className="text-[10px] text-slate-400 ml-1">— คลิกชื่อเพื่อดูรายละเอียด</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-slate-100 bg-slate-50">
+                  <th className="text-left px-4 py-2.5 font-semibold text-slate-500">#</th>
+                  <th className="text-left px-4 py-2.5 font-semibold text-slate-500">นักศึกษา</th>
+                  <th className="text-left px-4 py-2.5 font-semibold text-slate-500">รหัส</th>
+                  <th className="text-center px-4 py-2.5 font-semibold text-slate-500">เข้าชม (ครั้ง)</th>
+                  <th className="text-center px-4 py-2.5 font-semibold text-slate-500">ส่งงาน (ครั้ง)</th>
+                  <th className="text-left px-4 py-2.5 font-semibold text-slate-500">งานที่ส่ง</th>
+                  <th className="text-left px-4 py-2.5 font-semibold text-slate-500">เข้าชมล่าสุด</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(({ sid, student, visitCount, submissionCount, studentSubmissions, lastVisit }, i) => {
+                  const cfg = avatarCfg(sid);
+                  const name = student
+                    ? `${student.first_name} ${student.last_name}`.trim() || student.email
+                    : sid.slice(0, 8) + '...';
+                  const email = student?.email || '—';
+                  const submittedAssignmentTitles = studentSubmissions.map(sub => {
+                    const asgn = assignments.find(a => a.assignment_id === sub.assignment_id);
+                    return asgn?.title || sub.assignment_id;
+                  });
+
+                  return (
+                    <tr key={sid} className="border-b border-slate-50 hover:bg-indigo-50/30 transition-colors cursor-pointer group" onClick={() => onSelectStudent(sid)}>
+                      <td className="px-4 py-3 text-slate-400 font-medium">{i + 1}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2.5">
+                          <div
+                            className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 text-white"
+                            style={{ background: cfg.color }}
+                          >
+                            <i className={`fa-solid ${cfg.icon} text-[10px]`} />
+                          </div>
+                          <div>
+                            <div className="font-semibold text-indigo-700 group-hover:underline underline-offset-2">{name}</div>
+                            <div className="text-[10px] text-slate-400">{email}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-slate-600 font-mono text-[11px]">
+                        {student?.student_id || '—'}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-bold text-[11px]">
+                          <Eye size={10} />
+                          {visitCount}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-bold text-[11px] ${
+                          submissionCount > 0
+                            ? 'bg-emerald-50 text-emerald-700'
+                            : 'bg-slate-100 text-slate-400'
+                        }`}>
+                          <CheckCircle size={10} />
+                          {submissionCount}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 max-w-[200px]">
+                        {submittedAssignmentTitles.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {submittedAssignmentTitles.map((title, ti) => (
+                              <span key={ti} className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-100 px-1.5 py-0.5 rounded-md">
+                                {title}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-slate-300 text-[11px]">ยังไม่ส่งงาน</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-slate-400 text-[10px]">
+                        {lastVisit?.visited_at
+                          ? new Date(lastVisit.visited_at).toLocaleString('th-TH', {
+                              dateStyle: 'short', timeStyle: 'short',
+                            })
+                          : '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
-
-      {/* Student table */}
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-        <div className="px-5 py-3.5 border-b border-slate-100 flex items-center gap-2">
-          <Users size={14} className="text-slate-500" />
-          <span className="text-xs font-bold text-slate-700">รายชื่อนักศึกษา</span>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b border-slate-100 bg-slate-50">
-                <th className="text-left px-4 py-2.5 font-semibold text-slate-500">#</th>
-                <th className="text-left px-4 py-2.5 font-semibold text-slate-500">นักศึกษา</th>
-                <th className="text-left px-4 py-2.5 font-semibold text-slate-500">รหัส</th>
-                <th className="text-center px-4 py-2.5 font-semibold text-slate-500">เข้าชม (ครั้ง)</th>
-                <th className="text-center px-4 py-2.5 font-semibold text-slate-500">ส่งงาน (ครั้ง)</th>
-                <th className="text-left px-4 py-2.5 font-semibold text-slate-500">งานที่ส่ง</th>
-                <th className="text-left px-4 py-2.5 font-semibold text-slate-500">เข้าชมล่าสุด</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map(({ sid, student, visitCount, submissionCount, studentSubmissions, lastVisit }, i) => {
-                const cfg = avatarCfg(sid);
-                const name = student
-                  ? `${student.first_name} ${student.last_name}`.trim() || student.email
-                  : sid.slice(0, 8) + '...';
-                const email = student?.email || '—';
-                const submittedAssignmentTitles = studentSubmissions.map(sub => {
-                  const asgn = assignments.find(a => a.assignment_id === sub.assignment_id);
-                  return asgn?.title || sub.assignment_id;
-                });
-
-                return (
-                  <tr key={sid} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
-                    <td className="px-4 py-3 text-slate-400 font-medium">{i + 1}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2.5">
-                        <div
-                          className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 text-white"
-                          style={{ background: cfg.color }}
-                        >
-                          <i className={`fa-solid ${cfg.icon} text-[10px]`} />
-                        </div>
-                        <div>
-                          <div className="font-semibold text-slate-800">{name}</div>
-                          <div className="text-[10px] text-slate-400">{email}</div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-slate-600 font-mono text-[11px]">
-                      {student?.student_id || '—'}
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-bold text-[11px]">
-                        <Eye size={10} />
-                        {visitCount}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-bold text-[11px] ${
-                        submissionCount > 0
-                          ? 'bg-emerald-50 text-emerald-700'
-                          : 'bg-slate-100 text-slate-400'
-                      }`}>
-                        <CheckCircle size={10} />
-                        {submissionCount}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 max-w-[200px]">
-                      {submittedAssignmentTitles.length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
-                          {submittedAssignmentTitles.map((title, ti) => (
-                            <span key={ti} className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-100 px-1.5 py-0.5 rounded-md">
-                              {title}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <span className="text-slate-300 text-[11px]">ยังไม่ส่งงาน</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-slate-400 text-[10px]">
-                      {lastVisit?.visited_at
-                        ? new Date(lastVisit.visited_at).toLocaleString('th-TH', {
-                            dateStyle: 'short', timeStyle: 'short',
-                          })
-                        : '—'}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
   );
 };
 
@@ -224,14 +432,38 @@ const CourseOverview: React.FC<{
   materials: Material[];
   assignments: Assignment[];
   questions: Question[];
+  replies: Reply[];
   activities: ActiveLearning[];
+  reflections: import('../types').TeachingReflection[];
   visits: StudentCourseVisit[];
   onEdit: () => void;
   onNavigate: (tab: string) => void;
-}> = ({ course, materials, assignments, questions, activities, visits, onEdit, onNavigate }) => {
+}> = ({ course, materials, assignments, questions, replies, activities, reflections, visits, onEdit, onNavigate }) => {
   const weeks = course.total_weeks || 15;
   const courseVisits = visits.filter(v => v.course_id === course.course_id);
   const uniqueStudents = new Set(courseVisits.map(v => v.student_id)).size;
+  const [exporting, setExporting] = useState(false);
+
+  const handleExport = async (includeImages: boolean) => {
+    setExporting(true);
+    try {
+      const { exportCourseToWord } = await import('../utils/exportCourseWord');
+      await exportCourseToWord({
+        course,
+        materials,
+        assignments,
+        questions,
+        replies,
+        activities,
+        reflections,
+        includeImages,
+      });
+    } catch (err) {
+      alert(`เกิดข้อผิดพลาดในการ export: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <div className="space-y-5">
@@ -245,13 +477,42 @@ const CourseOverview: React.FC<{
             <h2 className="text-xl font-extrabold text-slate-900 leading-tight">{course.course_name_th}</h2>
             <p className="text-xs text-slate-500 mt-1">{course.course_name_en}</p>
           </div>
-          <button
-            onClick={onEdit}
-            className="flex items-center gap-1.5 px-4 py-2 border border-indigo-200 text-indigo-700 hover:bg-indigo-50 text-xs font-bold rounded-xl transition shrink-0"
-          >
-            <Edit3 size={13} />
-            แก้ไขวิชา
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Export dropdown */}
+            <div className="relative group">
+              <button
+                disabled={exporting}
+                className="flex items-center gap-1.5 px-4 py-2 border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 text-xs font-bold rounded-xl transition disabled:opacity-60"
+              >
+                <FileDown size={13} />
+                {exporting ? 'กำลัง Export...' : 'Export Word'}
+                <ChevronDown size={11} />
+              </button>
+              <div className="absolute right-0 top-full mt-1 w-52 bg-white border border-slate-200 rounded-xl shadow-lg z-20 overflow-hidden opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all">
+                <button
+                  onClick={() => handleExport(true)}
+                  className="w-full text-left px-4 py-2.5 text-xs hover:bg-emerald-50 text-slate-700 font-medium flex items-center gap-2"
+                >
+                  <FileDown size={12} className="text-emerald-600" />
+                  Export พร้อมรูปภาพ
+                </button>
+                <button
+                  onClick={() => handleExport(false)}
+                  className="w-full text-left px-4 py-2.5 text-xs hover:bg-slate-50 text-slate-700 font-medium flex items-center gap-2 border-t border-slate-100"
+                >
+                  <AlignLeft size={12} className="text-slate-500" />
+                  Export เฉพาะข้อความ
+                </button>
+              </div>
+            </div>
+            <button
+              onClick={onEdit}
+              className="flex items-center gap-1.5 px-4 py-2 border border-indigo-200 text-indigo-700 hover:bg-indigo-50 text-xs font-bold rounded-xl transition"
+            >
+              <Edit3 size={13} />
+              แก้ไขวิชา
+            </button>
+          </div>
         </div>
         <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-slate-100">
           {[
@@ -386,15 +647,225 @@ const GenericSection: React.FC<{
   </div>
 );
 
+// ─── PDPA Editor ─────────────────────────────────────────────────────────────
+
+const DEFAULT_PURPOSES_TEXT = [
+  'เพื่อยืนยันตัวตนและจัดการบัญชีผู้ใช้งาน',
+  'เพื่อบันทึกการเข้าร่วมรายวิชาและติดตามความก้าวหน้าการเรียน',
+  'เพื่อรับ-ส่งงานมอบหมายและกิจกรรมการเรียนการสอน',
+  'เพื่อปรับปรุงคุณภาพการเรียนการสอนและการพัฒนาระบบ',
+  'เพื่อปฏิบัติตามหน้าที่ตามกฎหมายที่เกี่ยวข้องกับการศึกษา',
+];
+
+const PDPAEditor: React.FC<{
+  siteProfile: SiteProfile;
+  onSave: BackOfficeProps['onSavePdpa'];
+}> = ({ siteProfile, onSave }) => {
+  const parsePurposes = (): string[] => {
+    try {
+      const p = siteProfile.pdpa_purposes ? JSON.parse(siteProfile.pdpa_purposes) : null;
+      return Array.isArray(p) && p.length > 0 ? p : DEFAULT_PURPOSES_TEXT;
+    } catch { return DEFAULT_PURPOSES_TEXT; }
+  };
+
+  const [purposes, setPurposes] = useState<string[]>(parsePurposes);
+  const [retention, setRetention] = useState(
+    siteProfile.pdpa_retention ||
+    'ข้อมูลจะถูกเก็บรักษาตลอดระยะเวลาที่ท่านมีบัญชีในระบบ หรือตามที่กฎหมายกำหนด หลังสิ้นสุดความจำเป็น ข้อมูลจะถูกลบหรือทำให้ไม่สามารถระบุตัวตนได้'
+  );
+  const [thirdParty, setThirdParty] = useState(
+    siteProfile.pdpa_third_party ||
+    'ระบบนี้ใช้บริการ Supabase (ผู้ให้บริการ Cloud Database ที่ผ่านมาตรฐาน SOC 2) เพื่อจัดเก็บข้อมูล และ Google OAuth สำหรับการยืนยันตัวตน ข้อมูลของท่านจะไม่ถูกเปิดเผย ขาย หรือส่งต่อแก่บุคคลที่สามเพื่อวัตถุประสงค์เชิงพาณิชย์'
+  );
+  const [updatedAt, setUpdatedAt] = useState(siteProfile.pdpa_updated_at || 'มิถุนายน 2026');
+  const [effectiveDate, setEffectiveDate] = useState(siteProfile.pdpa_effective_date || '1 มิถุนายน 2026');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
+
+  const addPurpose = () => setPurposes(prev => [...prev, '']);
+  const removePurpose = (i: number) => setPurposes(prev => prev.filter((_, idx) => idx !== i));
+  const updatePurpose = (i: number, val: string) =>
+    setPurposes(prev => prev.map((p, idx) => idx === i ? val : p));
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await onSave({
+        pdpa_purposes: JSON.stringify(purposes.filter(p => p.trim())),
+        pdpa_retention: retention,
+        pdpa_third_party: thirdParty,
+        pdpa_updated_at: updatedAt,
+        pdpa_effective_date: effectiveDate,
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const previewProfile: SiteProfile = {
+    ...siteProfile,
+    pdpa_purposes: JSON.stringify(purposes),
+    pdpa_retention: retention,
+    pdpa_third_party: thirdParty,
+    pdpa_updated_at: updatedAt,
+    pdpa_effective_date: effectiveDate,
+  };
+
+  return (
+    <div className="space-y-6">
+      {showPreview && (
+        <PDPAPrivacyModal siteProfile={previewProfile} onClose={() => setShowPreview(false)} />
+      )}
+
+      {/* Page header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-extrabold text-slate-800 flex items-center gap-2">
+            <Shield size={18} className="text-indigo-600" />
+            นโยบายความเป็นส่วนตัว (PDPA)
+          </h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            แก้ไขเนื้อหานโยบายที่แสดงต่อผู้ใช้งาน — บันทึกแล้วมีผลทันที
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowPreview(true)}
+            className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 transition"
+          >
+            <Eye size={13} />
+            ดูตัวอย่าง
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className={`flex items-center gap-1.5 px-5 py-2 text-xs font-bold rounded-xl transition active:scale-[0.98] disabled:opacity-60 ${
+              saved
+                ? 'bg-emerald-600 text-white'
+                : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+            }`}
+          >
+            {saving ? <RefreshCw size={13} className="animate-spin" /> : <Save size={13} />}
+            {saving ? 'กำลังบันทึก...' : saved ? 'บันทึกแล้ว!' : 'บันทึก'}
+          </button>
+        </div>
+      </div>
+
+      {/* Metadata row */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+        <h3 className="text-xs font-bold text-slate-700 mb-4 uppercase tracking-wider">ข้อมูลเอกสาร</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">วันที่ปรับปรุงล่าสุด</label>
+            <input
+              value={updatedAt}
+              onChange={e => setUpdatedAt(e.target.value)}
+              placeholder="เช่น มิถุนายน 2026"
+              className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">วันที่มีผลบังคับใช้</label>
+            <input
+              value={effectiveDate}
+              onChange={e => setEffectiveDate(e.target.value)}
+              placeholder="เช่น 1 มิถุนายน 2026"
+              className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+        </div>
+        <p className="text-[10px] text-slate-400 mt-3">
+          ข้อมูล ชื่อ อีเมล และมหาวิทยาลัยของผู้ควบคุมข้อมูล ดึงจาก Profile ของอาจารย์โดยอัตโนมัติ
+        </p>
+      </div>
+
+      {/* Purposes editor */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+            วัตถุประสงค์การเก็บและใช้ข้อมูล (ข้อ 3)
+          </h3>
+          <button
+            onClick={addPurpose}
+            className="flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:text-white hover:bg-indigo-600 border border-indigo-200 hover:border-indigo-600 px-3 py-1.5 rounded-lg transition"
+          >
+            <Plus size={11} />
+            เพิ่มวัตถุประสงค์
+          </button>
+        </div>
+        <div className="space-y-2">
+          {purposes.map((p, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <span className="text-xs font-bold text-indigo-400 w-5 text-center shrink-0">{i + 1}.</span>
+              <input
+                value={p}
+                onChange={e => updatePurpose(i, e.target.value)}
+                placeholder={`วัตถุประสงค์ที่ ${i + 1}`}
+                className="flex-1 text-xs border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+              <button
+                onClick={() => removePurpose(i)}
+                disabled={purposes.length <= 1}
+                className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition disabled:opacity-30"
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Third party */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+        <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-3">
+          การเปิดเผยข้อมูลแก่บุคคลที่สาม (ข้อ 4)
+        </h3>
+        <textarea
+          value={thirdParty}
+          onChange={e => setThirdParty(e.target.value)}
+          rows={4}
+          className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none leading-relaxed"
+        />
+      </div>
+
+      {/* Retention */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+        <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-3">
+          ระยะเวลาการเก็บรักษาข้อมูล (ข้อ 6)
+        </h3>
+        <textarea
+          value={retention}
+          onChange={e => setRetention(e.target.value)}
+          rows={3}
+          className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none leading-relaxed"
+        />
+      </div>
+
+      {/* Info: fixed sections */}
+      <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4">
+        <p className="text-[11px] text-indigo-700 font-semibold mb-1">ส่วนที่ไม่สามารถแก้ไขผ่านหน้านี้ได้</p>
+        <p className="text-[11px] text-indigo-600 leading-relaxed">
+          ข้อมูลที่เก็บรวบรวม (ข้อ 2), สิทธิ์เจ้าของข้อมูล (ข้อ 5), และช่องทางติดต่อ (ข้อ 7)
+          เป็นข้อมูลคงที่ตามกฎหมาย PDPA — หากต้องการแก้ไข กรุณาติดต่อผู้พัฒนาระบบ
+        </p>
+      </div>
+    </div>
+  );
+};
+
 // ─── Main BackOffice ──────────────────────────────────────────────────────────
 
 export const BackOffice: React.FC<BackOfficeProps> = ({
-  courses, materials, assignments, questions, replies, activities,
-  visits, submissions, students,
-  onNavigateCourses, onNavigateToCourse, onEditCourse, onAddCourse,
+  courses, materials, assignments, questions, replies, activities, reflections,
+  visits, submissions, students, siteProfile,
+  onNavigateCourses, onNavigateToCourse, onEditCourse, onAddCourse, onSavePdpa,
 }) => {
   const [view, setView] = useState<BoView>({ type: 'dashboard' });
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [detailStudent, setDetailStudent] = useState<{ sid: string; courseId: string } | null>(null);
 
   const toggleCourse = (courseId: string) => {
     const willExpand = expandedId !== courseId;
@@ -431,9 +902,15 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
           questions={questions} replies={replies} activities={activities}
           visits={visits} allStudents={students}
           onNavigateCourses={onNavigateCourses}
-          onSelectCourse={(id) => { onNavigateToCourse(id, 'info'); }}
+          onSelectCourse={(id, section) => {
+            setExpandedId(id);
+            setView({ type: 'course', courseId: id, section: (section as CourseSection) || 'overview' });
+          }}
         />
       );
+    }
+    if (view.type === 'pdpa') {
+      return <PDPAEditor siteProfile={siteProfile} onSave={onSavePdpa} />;
     }
     if (!currentCourse) return null;
     const { courseId, section } = view;
@@ -442,11 +919,16 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
     const cQuestions = questions.filter(q => q.course_id === courseId);
     const cActivities = activities.filter(a => a.course_id === courseId);
 
+    const cReplies = replies.filter(r => cQuestions.some(q => q.question_id === r.question_id));
+    const cReflections = reflections.filter(r => r.course_id === courseId);
+
     if (section === 'overview') return (
       <CourseOverview
         course={currentCourse}
         materials={cMaterials} assignments={cAssignments}
-        questions={cQuestions} activities={cActivities}
+        questions={cQuestions} replies={cReplies}
+        activities={cActivities}
+        reflections={cReflections}
         visits={visits}
         onEdit={() => onEditCourse(currentCourse)}
         onNavigate={(tab) => onNavigateToCourse(courseId, tab)}
@@ -458,6 +940,7 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
         course={currentCourse}
         visits={visits} submissions={submissions}
         assignments={cAssignments} students={students}
+        onSelectStudent={(sid) => setDetailStudent({ sid, courseId })}
       />
     );
 
@@ -531,7 +1014,13 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
     return null;
   };
 
+  const modalStudent = detailStudent ? students.find(s => s.id === detailStudent.sid) : undefined;
+  const modalVisits = detailStudent ? visits.filter(v => v.course_id === detailStudent.courseId && v.student_id === detailStudent.sid) : [];
+  const modalSubmissions = detailStudent ? submissions.filter(s => s.course_id === detailStudent.courseId && s.student_id === detailStudent.sid) : [];
+  const modalAssignments = detailStudent ? assignments.filter(a => a.course_id === detailStudent.courseId) : [];
+
   return (
+    <>
     <div className="flex min-h-[calc(100vh-64px)] w-full overflow-hidden">
       {/* ── Left Sidebar ─────────────────────────────────────────── */}
       <aside className="w-64 shrink-0 bg-slate-900 flex flex-col">
@@ -561,6 +1050,19 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
           >
             <LayoutDashboard size={14} />
             Dashboard ภาพรวม
+          </button>
+
+          {/* PDPA Settings */}
+          <button
+            onClick={() => { setView({ type: 'pdpa' }); setExpandedId(null); }}
+            className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
+              view.type === 'pdpa'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+            }`}
+          >
+            <Shield size={14} />
+            นโยบาย PDPA
           </button>
 
           {/* Section divider */}
@@ -653,6 +1155,9 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
           {view.type === 'dashboard' && (
             <><ChevronRight size={12} /><span>Dashboard ภาพรวม</span></>
           )}
+          {view.type === 'pdpa' && (
+            <><ChevronRight size={12} /><Shield size={12} className="text-indigo-500" /><span className="font-semibold text-slate-700">นโยบาย PDPA</span></>
+          )}
           {view.type === 'course' && currentCourse && (
             <>
               <ChevronRight size={12} />
@@ -670,5 +1175,17 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
         </div>
       </main>
     </div>
+
+    {detailStudent && (
+      <StudentDetailModal
+        studentId={detailStudent.sid}
+        student={modalStudent}
+        visits={modalVisits}
+        submissions={modalSubmissions}
+        assignments={modalAssignments}
+        onClose={() => setDetailStudent(null)}
+      />
+    )}
+    </>
   );
 };

@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { BookOpen, MapPin, Award, Building2, GraduationCap } from 'lucide-react';
+import { BookOpen, MapPin, Award, Building2, GraduationCap, Shield } from 'lucide-react';
 
 interface FooterProps {
   name: string;
@@ -13,10 +13,11 @@ interface FooterProps {
   faculty?: string;
   university?: string;
   bio?: string;
+  onOpenPrivacy?: () => void;
 }
 
 export const Footer: React.FC<FooterProps> = ({
-  name, title, department, faculty, university, bio
+  name, title, department, faculty, university, bio, onOpenPrivacy
 }) => {
   const currentYear = new Date().getFullYear();
 
@@ -81,10 +82,21 @@ export const Footer: React.FC<FooterProps> = ({
 
         {/* Bottom copyright */}
         <div className="pt-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs font-medium">
-          <div>&copy; {currentYear} {name}. สงวนลิขสิทธิ์ทั้งหมด</div>
-          <div className="flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span className="text-slate-500">พร้อมใช้งานสำหรับการเผยแพร่สู่สาธารณะ</span>
+          <div className="text-slate-500">&copy; {currentYear} {name}. สงวนลิขสิทธิ์ทั้งหมด</div>
+          <div className="flex items-center gap-4">
+            {onOpenPrivacy && (
+              <button
+                onClick={onOpenPrivacy}
+                className="flex items-center gap-1 text-slate-500 hover:text-indigo-400 transition text-[11px]"
+              >
+                <Shield size={12} />
+                <span>นโยบายความเป็นส่วนตัว (PDPA)</span>
+              </button>
+            )}
+            <div className="flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span className="text-slate-500">พร้อมใช้งานสำหรับการเผยแพร่สู่สาธารณะ</span>
+            </div>
           </div>
         </div>
       </div>
