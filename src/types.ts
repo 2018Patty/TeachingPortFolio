@@ -32,6 +32,14 @@ export interface SiteProfile {
   pdpa_updated_at?: string;     // e.g. "มิถุนายน 2026"
   pdpa_effective_date?: string; // e.g. "1 มิถุนายน 2026"
   pdpa_version?: string;        // ISO timestamp — bumped on every admin save
+  semester_schedules?: string;  // JSON: SemesterSchedule[]
+}
+
+export interface SemesterSchedule {
+  semester_id: number;   // 1 or 2
+  year: number;          // academic year e.g. 2026
+  week1_start: string;   // ISO date 'YYYY-MM-DD' — Monday of week 1
+  total_weeks: number;   // default 16
 }
 
 export type MaterialType = 'slides' | 'video' | 'document' | 'link';
@@ -80,6 +88,7 @@ export interface Assignment {
   title: string;
   description: string;
   due_date: string; // Date string
+  week_number?: number;
   attachment_url?: string;
   status: AssignmentStatus;
   created_at?: string;
@@ -139,6 +148,7 @@ export interface ActiveLearning {
   title: string;
   description: string;
   duration: string;
+  week_number?: number;
   file_url?: string;
   is_assignment?: boolean;
   due_date?: string;

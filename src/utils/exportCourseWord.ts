@@ -443,11 +443,16 @@ export async function exportCourseToWord(params: {
   const { course, materials, assignments, questions, replies, activities, reflections, includeImages = true } = params;
 
   const cMaterials = materials.filter(m => m.course_id === course.course_id);
-  const cAssignments = assignments.filter(a => a.course_id === course.course_id);
   const cQuestions = questions.filter(q => q.course_id === course.course_id);
   const cReplies = replies.filter(r => cQuestions.some(q => q.question_id === r.question_id));
   const cActivities = activities.filter(a => a.course_id === course.course_id);
   const cReflections = reflections.filter(r => r.course_id === course.course_id);
+
+  // Exclude standalone assignments whose title matches ANY AL activity
+  const alTitles = new Set(cActivities.map(a => a.title.trim().toLowerCase()));
+  const cAssignments = assignments
+    .filter(a => a.course_id === course.course_id)
+    .filter(a => !alTitles.has(a.title.trim().toLowerCase()));
 
   const now = new Date();
   const exportDate = `${now.getDate()}/${now.getMonth() + 1}/${now.getFullYear() + 543}`;

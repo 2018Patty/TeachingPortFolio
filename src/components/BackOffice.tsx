@@ -4,25 +4,28 @@ import {
   MessageSquare, ClipboardList, ChevronDown, ChevronRight,
   Eye, Edit3, ExternalLink, Clock, CheckCircle, TrendingUp,
   GraduationCap, CalendarDays, ArrowRight, Plus, X, Link as LinkIcon,
-  FileDown, AlignLeft, Shield, Save, RefreshCw, Trash2,
+  FileDown, AlignLeft, Shield, Save, RefreshCw, Trash2, Calendar,
 } from 'lucide-react';
 import {
   Course, Material, Assignment, Question, Reply, ActiveLearning,
   StudentProfile, StudentCourseVisit, AssignmentSubmission, SiteProfile,
+  SemesterSchedule,
 } from '../types';
 import { DashboardPage } from './DashboardPage';
 import { PDPAPrivacyModal } from './PDPAPrivacyModal';
+import { TeachingPlanTab } from './TeachingPlanTab';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type CourseSection =
   | 'overview' | 'students' | 'objectives'
-  | 'materials' | 'active_learning' | 'qa' | 'assignments';
+  | 'materials' | 'active_learning' | 'qa' | 'assignments' | 'plan';
 
 type BoView =
   | { type: 'dashboard' }
   | { type: 'course'; courseId: string; section: CourseSection }
-  | { type: 'pdpa' };
+  | { type: 'pdpa' }
+  | { type: 'schedule' };
 
 interface BackOfficeProps {
   courses: Course[];
@@ -41,6 +44,8 @@ interface BackOfficeProps {
   onEditCourse: (course: Course) => void;
   onAddCourse: () => void;
   onSavePdpa: (data: Pick<SiteProfile, 'pdpa_purposes' | 'pdpa_retention' | 'pdpa_third_party' | 'pdpa_updated_at' | 'pdpa_effective_date' | 'pdpa_version'>) => Promise<void>;
+  semesterSchedules: SemesterSchedule[];
+  onSaveSchedules: (schedules: SemesterSchedule[]) => Promise<void>;
 }
 
 // ─── Sidebar section config ───────────────────────────────────────────────────
@@ -53,6 +58,7 @@ const SECTIONS: { section: CourseSection; label: string; icon: React.ReactNode; 
   { section: 'active_learning',label: 'Active Learning',   icon: <Zap size={12} />,          tab: 'active_learning' },
   { section: 'qa',             label: 'ถามตอบ',            icon: <MessageSquare size={12} />, tab: 'qa' },
   { section: 'assignments',    label: 'งานมอบหมาย',       icon: <ClipboardList size={12} />, tab: 'assignments' },
+  { section: 'plan',           label: 'แผนการสอน',        icon: <Calendar size={12} /> },
 ];
 
 // ─── Helper: FA icon avatar (same logic as StudentProfilePage) ────────────────
@@ -856,12 +862,208 @@ const PDPAEditor: React.FC<{
   );
 };
 
+// ─── Semester Schedule Editor ─────────────────────────────────────────────────
+
+const TH_MONTHS_FULL = [
+  'มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน',
+  'กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม',
+];
+
+function formatTHDateFull(iso: string): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return `${d.getDate()} ${TH_MONTHS_FULL[d.getMonth()]} ${d.getFullYear() + 543}`;
+}
+
+function calcWeekEnd(iso: string, totalWeeks: number): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  d.setDate(d.getDate() + totalWeeks * 7 - 1);
+  return `${d.getDate()} ${TH_MONTHS_FULL[d.getMonth()]} ${d.getFullYear() + 543}`;
+}
+
+const SemesterScheduleEditor: React.FC<{
+  schedules: SemesterSchedule[];
+  onSave: (s: SemesterSchedule[]) => Promise<void>;
+}> = ({ schedules, onSave }) => {
+  const [list, setList] = useState<SemesterSchedule[]>(schedules);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [form, setForm] = useState<{ semester_id: number; year: number; week1_start: string; total_weeks: number }>({
+    semester_id: 1, year: new Date().getFullYear(), week1_start: '', total_weeks: 16,
+  });
+  const [formError, setFormError] = useState('');
+
+  const handleAdd = () => {
+    if (!form.week1_start) { setFormError('กรุณาเลือกวันที่เริ่มต้นสัปดาห์ที่ 1'); return; }
+    const exists = list.some(s => s.semester_id === form.semester_id && s.year === form.year);
+    if (exists) { setFormError(`มีการตั้งค่าภาคเรียน ${form.semester_id}/${form.year} แล้ว กรุณาลบก่อนเพิ่มใหม่`); return; }
+    setFormError('');
+    setList(prev => [...prev, { ...form }]);
+  };
+
+  const handleDelete = (idx: number) => setList(prev => prev.filter((_, i) => i !== idx));
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await onSave(list);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const currentYear = new Date().getFullYear();
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-extrabold text-slate-800 flex items-center gap-2">
+            <Calendar size={18} className="text-indigo-600" />
+            ตารางการสอน — วันเริ่มต้นแต่ละภาคเรียน
+          </h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            กำหนดวันที่เริ่มสัปดาห์ที่ 1 ระบบจะคำนวณช่วงวันที่ครบทุกสัปดาห์อัตโนมัติ
+          </p>
+        </div>
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className={`flex items-center gap-1.5 px-5 py-2 text-xs font-bold rounded-xl transition active:scale-[0.98] disabled:opacity-60 text-white ${
+            saved ? 'bg-emerald-600' : 'bg-indigo-600 hover:bg-indigo-700'
+          }`}
+        >
+          {saving ? <RefreshCw size={13} className="animate-spin" /> : <Save size={13} />}
+          {saving ? 'กำลังบันทึก...' : saved ? 'บันทึกแล้ว!' : 'บันทึก'}
+        </button>
+      </div>
+
+      {/* Add form */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+        <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-4">เพิ่มภาคการศึกษาใหม่</h3>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">ภาคเรียนที่</label>
+            <select
+              value={form.semester_id}
+              onChange={e => setForm(f => ({ ...f, semester_id: Number(e.target.value) }))}
+              className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value={1}>ภาคเรียนที่ 1</option>
+              <option value={2}>ภาคเรียนที่ 2</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">ปีการศึกษา</label>
+            <select
+              value={form.year}
+              onChange={e => setForm(f => ({ ...f, year: Number(e.target.value) }))}
+              className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              {[currentYear - 1, currentYear, currentYear + 1, currentYear + 2].map(y => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">วันแรกสัปดาห์ที่ 1</label>
+            <input
+              type="date"
+              value={form.week1_start}
+              onChange={e => { setForm(f => ({ ...f, week1_start: e.target.value })); setFormError(''); }}
+              className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">จำนวนสัปดาห์</label>
+            <input
+              type="number"
+              min={8} max={20}
+              value={form.total_weeks}
+              onChange={e => setForm(f => ({ ...f, total_weeks: Math.max(8, Math.min(20, Number(e.target.value))) }))}
+              className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+        </div>
+        {form.week1_start && (
+          <p className="text-[10px] text-slate-500 mb-3">
+            สิ้นสุดสัปดาห์ที่ {form.total_weeks}: <span className="font-semibold text-slate-700">{calcWeekEnd(form.week1_start, form.total_weeks)}</span>
+          </p>
+        )}
+        {formError && <p className="text-[11px] text-red-600 font-medium mb-3">{formError}</p>}
+        <button
+          onClick={handleAdd}
+          className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition active:scale-[0.98]"
+        >
+          <Plus size={13} />
+          เพิ่มภาคการศึกษา
+        </button>
+      </div>
+
+      {/* Schedule list */}
+      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+        <div className="px-5 py-3.5 border-b border-slate-100 text-xs font-bold text-slate-700 uppercase tracking-wider">
+          ภาคการศึกษาที่กำหนดแล้ว ({list.length})
+        </div>
+        {list.length === 0 ? (
+          <div className="px-5 py-8 text-center text-xs text-slate-400">ยังไม่มีการตั้งค่า</div>
+        ) : (
+          <div className="divide-y divide-slate-100">
+            {[...list].sort((a, b) => b.year - a.year || b.semester_id - a.semester_id).map((s, i) => {
+              const origIdx = list.indexOf(s);
+              return (
+                <div key={i} className="flex items-center px-5 py-3.5 gap-4 hover:bg-slate-50 transition">
+                  <div className="w-8 h-8 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center shrink-0">
+                    <Calendar size={14} className="text-indigo-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-bold text-slate-800">
+                      ภาคเรียนที่ {s.semester_id}/{s.year}
+                    </div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">
+                      สัปดาห์ที่ 1: <span className="font-semibold text-slate-700">{formatTHDateFull(s.week1_start)}</span>
+                      &nbsp;·&nbsp;
+                      สิ้นสุด: <span className="font-semibold text-slate-700">{calcWeekEnd(s.week1_start, s.total_weeks)}</span>
+                      &nbsp;·&nbsp;{s.total_weeks} สัปดาห์
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleDelete(origIdx)}
+                    className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition"
+                    title="ลบ"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4">
+        <p className="text-[11px] text-blue-700 font-semibold mb-1">วิธีใช้งาน</p>
+        <ul className="text-[11px] text-blue-600 space-y-1 leading-relaxed">
+          <li>• ตั้งค่า "วันแรกสัปดาห์ที่ 1" ให้ตรงกับวันเปิดภาคแต่ละรายวิชาในมหาวิทยาลัย</li>
+          <li>• ระบบจะคำนวณช่วงวันทุกสัปดาห์ให้อัตโนมัติ และแสดงในแท็บ "แผนการสอน" ของทุกวิชาในภาคนั้น</li>
+          <li>• หัวข้อแต่ละสัปดาห์ดึงมาจากชื่อเอกสารประกอบการสอนที่กำหนด week_number ไว้</li>
+        </ul>
+      </div>
+    </div>
+  );
+};
+
 // ─── Main BackOffice ──────────────────────────────────────────────────────────
 
 export const BackOffice: React.FC<BackOfficeProps> = ({
   courses, materials, assignments, questions, replies, activities, reflections,
   visits, submissions, students, siteProfile,
   onNavigateCourses, onNavigateToCourse, onEditCourse, onAddCourse, onSavePdpa,
+  semesterSchedules, onSaveSchedules,
 }) => {
   const [view, setView] = useState<BoView>({ type: 'dashboard' });
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -911,6 +1113,9 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
     }
     if (view.type === 'pdpa') {
       return <PDPAEditor siteProfile={siteProfile} onSave={onSavePdpa} />;
+    }
+    if (view.type === 'schedule') {
+      return <SemesterScheduleEditor schedules={semesterSchedules} onSave={onSaveSchedules} />;
     }
     if (!currentCourse) return null;
     const { courseId, section } = view;
@@ -1011,6 +1216,16 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
       />
     );
 
+    if (section === 'plan') return (
+      <TeachingPlanTab
+        course={currentCourse}
+        materials={cMaterials}
+        activities={cActivities}
+        assignments={cAssignments}
+        semesterSchedules={semesterSchedules}
+      />
+    );
+
     return null;
   };
 
@@ -1063,6 +1278,19 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
           >
             <Shield size={14} />
             นโยบาย PDPA
+          </button>
+
+          {/* Semester Schedule */}
+          <button
+            onClick={() => { setView({ type: 'schedule' }); setExpandedId(null); }}
+            className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
+              view.type === 'schedule'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+            }`}
+          >
+            <Calendar size={14} />
+            ตารางการสอน
           </button>
 
           {/* Section divider */}
@@ -1157,6 +1385,9 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
           )}
           {view.type === 'pdpa' && (
             <><ChevronRight size={12} /><Shield size={12} className="text-indigo-500" /><span className="font-semibold text-slate-700">นโยบาย PDPA</span></>
+          )}
+          {view.type === 'schedule' && (
+            <><ChevronRight size={12} /><Calendar size={12} className="text-indigo-500" /><span className="font-semibold text-slate-700">ตารางการสอน</span></>
           )}
           {view.type === 'course' && currentCourse && (
             <>

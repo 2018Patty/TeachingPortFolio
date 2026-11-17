@@ -12,11 +12,17 @@ interface StudentAuthModalProps {
 
 type AuthTab = 'login' | 'register';
 
+// Email/password sign-up is turned off: Supabase requires e-mail confirmation and the
+// built-in mailer cannot deliver to students. Set to true once "Confirm email" is
+// disabled (or custom SMTP is configured) in the Supabase dashboard.
+const EMAIL_AUTH_ENABLED = false;
+
 export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({ onClose, initialTab = 'login', siteProfile }) => {
   const [tab, setTab] = useState<AuthTab>(initialTab);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [pendingEmail, setPendingEmail] = useState('');
 
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
   const [pdpaConsent, setPdpaConsent] = useState(false);
@@ -56,11 +62,16 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({ onClose, ini
       password: loginForm.password,
     });
     if (loginError) {
-      setError(
-        loginError.message === 'Invalid login credentials'
-          ? 'อีเมลหรือรหัสผ่านไม่ถูกต้อง'
-          : loginError.message
-      );
+      if (/email not confirmed/i.test(loginError.message)) {
+        setPendingEmail(loginForm.email);
+        setError('อีเมลนี้ยังไม่ได้ยืนยันตัวตน กรุณาคลิกลิงก์ในอีเมลยืนยัน (ตรวจสอบโฟลเดอร์ Spam/Junk ด้วย) หรือกด "ส่งอีเมลยืนยันอีกครั้ง"');
+      } else {
+        setError(
+          loginError.message === 'Invalid login credentials'
+            ? 'อีเมลหรือรหัสผ่านไม่ถูกต้อง'
+            : loginError.message
+        );
+      }
     } else {
       onClose();
     }
@@ -92,6 +103,9 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({ onClose, ini
       email,
       password,
       options: {
+        // Send the confirmation link back to the site the student signed up from
+        // (otherwise Supabase falls back to the dashboard "Site URL", often localhost).
+        emailRedirectTo: window.location.origin,
         data: {
           student_id: student_id.trim(),
           first_name: first_name.trim(),
@@ -108,12 +122,42 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({ onClose, ini
       setLoading(false);
       return;
     }
+    // Supabase returns a fake user with no identities (and sends no email)
+    // when the address is already registered — treat it as a duplicate.
+    if (data.user && data.user.identities && data.user.identities.length === 0) {
+      setError('อีเมลนี้ถูกสมัครแล้ว กรุณาเข้าสู่ระบบ (หากยังไม่ได้ยืนยันอีเมล กด "ส่งอีเมลยืนยันอีกครั้ง")');
+      setPendingEmail(email);
+      setLoading(false);
+      return;
+    }
     if (data.user && !data.session) {
+      setPendingEmail(email);
       setSuccessMsg(
-        'สมัครสมาชิกสำเร็จ! กรุณาตรวจสอบอีเมลเพื่อยืนยันตัวตน แล้วเข้าสู่ระบบอีกครั้ง'
+        `สมัครสมาชิกสำเร็จ! ระบบส่งอีเมลยืนยันไปที่ ${email} แล้ว กรุณาคลิกลิงก์ในอีเมล (ตรวจสอบโฟลเดอร์ Spam/Junk ด้วย) แล้วเข้าสู่ระบบอีกครั้ง`
       );
     } else {
       onClose();
+    }
+    setLoading(false);
+  };
+
+  const handleResendConfirmation = async () => {
+    if (!pendingEmail) return;
+    setLoading(true);
+    setError('');
+    const { error: resendError } = await supabase.auth.resend({
+      type: 'signup',
+      email: pendingEmail,
+      options: { emailRedirectTo: window.location.origin },
+    });
+    if (resendError) {
+      setError(
+        /rate limit|seconds/i.test(resendError.message)
+          ? 'ส่งอีเมลบ่อยเกินไป กรุณารอสักครู่แล้วลองใหม่'
+          : resendError.message
+      );
+    } else {
+      setSuccessMsg(`ส่งอีเมลยืนยันไปที่ ${pendingEmail} อีกครั้งแล้ว กรุณาตรวจสอบกล่องจดหมายและโฟลเดอร์ Spam/Junk`);
     }
     setLoading(false);
   };
@@ -122,6 +166,7 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({ onClose, ini
     setTab(newTab);
     setError('');
     setSuccessMsg('');
+    setPendingEmail('');
   };
 
   return (
@@ -149,6 +194,7 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({ onClose, ini
         </div>
 
         {/* Tabs */}
+        {EMAIL_AUTH_ENABLED && (
         <div className="flex border-b border-slate-100">
           <button
             onClick={() => switchTab('login')}
@@ -171,8 +217,16 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({ onClose, ini
             สมัครสมาชิก
           </button>
         </div>
+        )}
 
         <div className="p-6 space-y-4">
+          {!EMAIL_AUTH_ENABLED && (
+            <p className="text-xs text-slate-600 leading-relaxed text-center">
+              สมัครสมาชิกและเข้าสู่ระบบด้วยบัญชี Google ได้ทันที ไม่ต้องยืนยันอีเมล
+              <br />
+              <span className="text-slate-400">ครั้งแรกระบบจะให้กรอกรหัสนักศึกษา ชื่อ และนามสกุล</span>
+            </p>
+          )}
           {/* Google button */}
           <button
             onClick={handleGoogleLogin}
@@ -185,8 +239,28 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({ onClose, ini
               <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
               <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
             </svg>
-            {tab === 'login' ? 'เข้าสู่ระบบด้วย Google' : 'สมัครด้วย Google'}
+            {!EMAIL_AUTH_ENABLED ? 'สมัคร / เข้าสู่ระบบด้วย Google' : tab === 'login' ? 'เข้าสู่ระบบด้วย Google' : 'สมัครด้วย Google'}
           </button>
+
+          {!EMAIL_AUTH_ENABLED && (
+            <>
+              {error && <p className="text-xs text-red-600 font-medium text-center">{error}</p>}
+              <p className="text-[10px] text-slate-400 text-center leading-relaxed">
+                การเข้าสู่ระบบถือว่ายอมรับ{' '}
+                <button
+                  type="button"
+                  onClick={() => setShowPrivacyModal(true)}
+                  className="inline-flex items-center gap-0.5 text-emerald-600 font-semibold hover:underline"
+                >
+                  <Shield size={10} />
+                  นโยบายความเป็นส่วนตัว (PDPA)
+                </button>
+                {' '}เพื่อวัตถุประสงค์ทางการศึกษา
+              </p>
+            </>
+          )}
+
+          {EMAIL_AUTH_ENABLED && (<>
 
           <div className="flex items-center gap-3">
             <div className="flex-1 h-px bg-slate-100" />
@@ -196,8 +270,48 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({ onClose, ini
 
           {/* Success message (email confirmation pending) */}
           {successMsg ? (
-            <div className="bg-emerald-50 text-emerald-800 text-xs font-medium border border-emerald-200 p-4 rounded-xl leading-relaxed">
-              {successMsg}
+            <div className="bg-emerald-50 text-emerald-800 text-xs font-medium border border-emerald-200 p-4 rounded-xl leading-relaxed space-y-3">
+              <p>{successMsg}</p>
+              {pendingEmail && (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={handleResendConfirmation}
+                    disabled={loading}
+                    className="px-3 py-1.5 rounded-lg bg-white border border-emerald-300 text-emerald-700 font-semibold hover:bg-emerald-100 disabled:opacity-50"
+                  >
+                    ส่งอีเมลยืนยันอีกครั้ง
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setSuccessMsg(''); setTab('login'); setLoginForm(f => ({ ...f, email: pendingEmail })); }}
+                    className="px-3 py-1.5 rounded-lg text-emerald-700 font-semibold hover:bg-emerald-100"
+                  >
+                    ไปหน้าเข้าสู่ระบบ
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : pendingEmail && error ? (
+            <div className="space-y-3">
+              <div className="bg-amber-50 text-amber-800 text-xs font-medium border border-amber-200 p-4 rounded-xl leading-relaxed">{error}</div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleResendConfirmation}
+                  disabled={loading}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  ส่งอีเมลยืนยันอีกครั้ง
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setError(''); setPendingEmail(''); }}
+                  className="px-3 py-1.5 rounded-lg text-slate-600 text-xs font-semibold hover:bg-slate-100"
+                >
+                  กลับ
+                </button>
+              </div>
             </div>
           ) : tab === 'login' ? (
             /* Login Form */
@@ -340,6 +454,7 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({ onClose, ini
               </p>
             </form>
           )}
+          </>)}
         </div>
       </div>
     </div>

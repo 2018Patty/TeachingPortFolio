@@ -44,7 +44,8 @@ import {
   File as FileIcon
 } from 'lucide-react';
 
-import { Role, StudentProfile, StudentCourseVisit, AssignmentSubmission, Course, Material, Assignment, MaterialType, AssignmentStatus, SiteProfile, Question, Reply, ActiveLearning, TeachingReflection, AL_TYPES } from './types';
+import { Role, StudentProfile, StudentCourseVisit, AssignmentSubmission, Course, Material, Assignment, MaterialType, AssignmentStatus, SiteProfile, Question, Reply, ActiveLearning, TeachingReflection, AL_TYPES, SemesterSchedule } from './types';
+import { TeachingPlanTab } from './components/TeachingPlanTab';
 import { Navbar } from './components/Navbar';
 import { SemesterSelector } from './components/SemesterSelector';
 import { Footer } from './components/Footer';
@@ -88,7 +89,7 @@ export default function App() {
 
   // 3. Navigation state
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
-  const [courseDetailTab, setCourseDetailTab] = useState<'info' | 'materials' | 'assignments' | 'qa' | 'active_learning' | 'reflection'>('info');
+  const [courseDetailTab, setCourseDetailTab] = useState<'info' | 'materials' | 'assignments' | 'qa' | 'active_learning' | 'reflection' | 'plan'>('info');
 
   // 4. Modals and Forms states
   const [showLoginModal, setShowLoginModal] = useState(false);
@@ -97,6 +98,9 @@ export default function App() {
 
   // PDPA state
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
+
+  // Semester schedules
+  const [semesterSchedules, setSemesterSchedules] = useState<SemesterSchedule[]>([]);
 
   // Student auth state
   const [studentProfile, setStudentProfile] = useState<StudentProfile | null>(null);
@@ -197,6 +201,7 @@ export default function App() {
     title: '',
     description: '',
     due_date: '2026-06-30',
+    week_number: 1,
     attachment_url: '',
     status: 'open' as AssignmentStatus
   });
@@ -245,7 +250,11 @@ export default function App() {
       setReflections(reflectionsRes.data as TeachingReflection[]);
     }
     if (!profileRes.error && profileRes.data) {
-      setSiteProfile({ ...DEFAULT_PROFILE, ...profileRes.data });
+      const p = profileRes.data as SiteProfile;
+      setSiteProfile({ ...DEFAULT_PROFILE, ...p });
+      if (p.semester_schedules) {
+        try { setSemesterSchedules(JSON.parse(p.semester_schedules)); } catch { /* ignore */ }
+      }
     }
     if (!visitsRes.error && visitsRes.data) {
       setVisits(visitsRes.data as StudentCourseVisit[]);
@@ -269,6 +278,11 @@ export default function App() {
   const handleSavePdpa = async (data: Pick<SiteProfile, 'pdpa_purposes' | 'pdpa_retention' | 'pdpa_third_party' | 'pdpa_updated_at' | 'pdpa_effective_date' | 'pdpa_version'>) => {
     // Bump version on every policy save so all users see the consent banner again
     await handleSaveProfile({ ...data, pdpa_version: new Date().toISOString() });
+  };
+
+  const handleSaveSchedules = async (schedules: SemesterSchedule[]) => {
+    await handleSaveProfile({ semester_schedules: JSON.stringify(schedules) });
+    setSemesterSchedules(schedules);
   };
 
   const handlePasswordChange = async (oldPw: string, newPw: string): Promise<{ success: boolean; message: string }> => {
@@ -410,16 +424,22 @@ export default function App() {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Update dynamic academic years from course dataset; auto-select the most recent year/semester if current filter has no results
+  // Update dynamic academic years from course dataset; auto-select the most recent year/semester
+  const initialTermAppliedRef = useRef(false);
   useEffect(() => {
     if (courses.length === 0) return;
     const yearsInDB = courses.map(c => c.year);
     const uniqueYears = Array.from(new Set([...yearsInDB])).sort((a, b) => a - b);
     setYearsList(uniqueYears);
 
-    // If currently selected year/semester shows no courses, jump to the most recent one
+    // On first load (no ?semester/?year in URL), always show the most recent semester.
+    // Afterwards, only jump when the selected year/semester has no courses.
+    const isFirstLoad = !initialTermAppliedRef.current;
+    initialTermAppliedRef.current = true;
+    const params = new URLSearchParams(window.location.search);
+    const hasUrlTerm = params.has('semester') || params.has('year');
     const hasMatch = courses.some(c => c.semester_id === semester && c.year === year);
-    if (!hasMatch) {
+    if ((isFirstLoad && !hasUrlTerm) || !hasMatch) {
       const sorted = [...courses].sort((a, b) =>
         b.year !== a.year ? b.year - a.year : b.semester_id - a.semester_id
       );
@@ -598,7 +618,7 @@ export default function App() {
   const resetActivityModal = () => {
     setShowActivityModal(false);
     setEditingActivity(null);
-    setActivityForm({ type_id: '', title: '', description: '', duration: '', file_url: '' });
+    setActivityForm({ type_id: '', title: '', description: '', duration: '', week_number: 1, file_url: '' });
     setActivityFiles([]);
     setActivityUploading(false);
     setActivityUploadError('');
@@ -637,13 +657,13 @@ export default function App() {
     }
 
     if (editingActivity) {
-      const updateData = { type_id: activityForm.type_id, title: resolvedTitle, description: activityForm.description.trim(), duration: activityForm.duration.trim(), file_url: fileUrl, is_assignment: activityIsAssignment, due_date: activityIsAssignment ? activityDueDate.trim() : null };
+      const updateData = { type_id: activityForm.type_id, title: resolvedTitle, description: activityForm.description.trim(), duration: activityForm.duration.trim(), week_number: Number(activityForm.week_number) || 1, file_url: fileUrl, is_assignment: activityIsAssignment, due_date: activityIsAssignment ? activityDueDate.trim() : null };
       const { error } = await supabase.from('active_learning').update(updateData).eq('activity_id', editingActivity.activity_id);
       if (error) { alert(`ไม่สามารถแก้ไขกิจกรรมได้: ${error.message}`); return; }
       setActivities(activities.map((a: ActiveLearning) => a.activity_id === editingActivity.activity_id ? { ...a, ...updateData } : a));
     } else {
       const activity_id = `al-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-      const newActivity: ActiveLearning = { activity_id, course_id: selectedCourseId, type_id: activityForm.type_id, title: resolvedTitle, description: activityForm.description.trim(), duration: activityForm.duration.trim(), file_url: fileUrl, is_assignment: activityIsAssignment, due_date: activityIsAssignment ? activityDueDate.trim() : undefined };
+      const newActivity: ActiveLearning = { activity_id, course_id: selectedCourseId, type_id: activityForm.type_id, title: resolvedTitle, description: activityForm.description.trim(), duration: activityForm.duration.trim(), week_number: Number(activityForm.week_number) || 1, file_url: fileUrl, is_assignment: activityIsAssignment, due_date: activityIsAssignment ? activityDueDate.trim() : undefined };
       const { error } = await supabase.from('active_learning').insert(newActivity);
       if (error) { alert(`ไม่สามารถเพิ่มกิจกรรมได้: ${error.message}`); return; }
       setActivities([...activities, newActivity]);
@@ -660,7 +680,7 @@ export default function App() {
 
   const handleEditActivityClick = (activity: ActiveLearning) => {
     setEditingActivity(activity);
-    setActivityForm({ type_id: activity.type_id || '', title: activity.title, description: activity.description, duration: activity.duration, file_url: activity.file_url || '' });
+    setActivityForm({ type_id: activity.type_id || '', title: activity.title, description: activity.description, duration: activity.duration, week_number: activity.week_number ?? 1, file_url: activity.file_url || '' });
     setActivityFiles([]);
     setActivityUploadError('');
     setActivityIsAssignment(activity.is_assignment || false);
@@ -763,7 +783,7 @@ export default function App() {
   // 7. Security and Authentication handlers
   const handleAdminLogin = () => {
     const storedPw = siteProfile.admin_password || 'admin123';
-    if (adminPassword === storedPw) {
+    if (adminPassword.trim() === storedPw.trim()) {
       // Guard ref immediately so SIGNED_OUT callback cannot override admin role
       roleRef.current = 'admin';
       // Fire-and-forget: clear any student OAuth session without blocking
@@ -915,6 +935,7 @@ export default function App() {
       title: assignment.title,
       description: assignment.description,
       due_date: assignment.due_date,
+      week_number: assignment.week_number ?? 1,
       attachment_url: assignment.attachment_url || '',
       status: assignment.status
     });
@@ -1175,6 +1196,7 @@ export default function App() {
         title: assignmentForm.title.trim(),
         description: assignmentForm.description.trim(),
         due_date: assignmentForm.due_date,
+        week_number: Number(assignmentForm.week_number) || 1,
         attachment_url: assignmentForm.attachment_url.trim() || '',
         status: assignmentForm.status
       };
@@ -1190,6 +1212,7 @@ export default function App() {
         title: assignmentForm.title.trim(),
         description: assignmentForm.description.trim(),
         due_date: assignmentForm.due_date,
+        week_number: Number(assignmentForm.week_number) || 1,
         attachment_url: assignmentForm.attachment_url.trim() || undefined,
         status: assignmentForm.status
       };
@@ -1199,7 +1222,7 @@ export default function App() {
     }
 
     setShowAssignmentModal(false);
-    setAssignmentForm({ title: '', description: '', due_date: '2026-06-30', attachment_url: '', status: 'open' });
+    setAssignmentForm({ title: '', description: '', due_date: '2026-06-30', week_number: 1, attachment_url: '', status: 'open' });
   };
 
   const handleDeleteAssignment = async (assignmentId: string) => {
@@ -1321,6 +1344,8 @@ export default function App() {
           onEditCourse={handleEditCourseFromBackOffice}
           onAddCourse={handleAddCourseClick}
           onSavePdpa={handleSavePdpa}
+          semesterSchedules={semesterSchedules}
+          onSaveSchedules={handleSaveSchedules}
         />
       )}
 
@@ -1671,10 +1696,11 @@ export default function App() {
                       { key: 'active_learning', label: 'Active Learning', icon: <Zap size={14} />,        badge: activeCourseActivities.length || null, badgeColor: 'bg-green-50 border-green-100 text-green-600' },
                       { key: 'qa',              label: 'ถาม-ตอบ',         icon: <MessageCircle size={14} />, badge: activeCourseQuestions.length || null, badgeColor: 'bg-amber-50 border-amber-100 text-amber-600' },
                       { key: 'assignments',     label: 'งานมอบหมาย',     icon: <FileText size={14} />,    badge: activeCourseAssignments.length, badgeColor: 'bg-pink-50 border-pink-100 text-pink-600' },
+                      { key: 'plan',            label: 'แผนการสอน',      icon: <BookMarked size={14} />,  badge: null },
                     ] as { key: string; label: string; icon: React.ReactNode; badge: number | null; badgeColor?: string }[]).map(tab => (
                       <button
                         key={tab.key}
-                        onClick={() => setCourseDetailTab(tab.key as 'info' | 'materials' | 'assignments' | 'qa' | 'active_learning' | 'reflection')}
+                        onClick={() => setCourseDetailTab(tab.key as 'info' | 'materials' | 'assignments' | 'qa' | 'active_learning' | 'reflection' | 'plan')}
                         className={`flex-1 flex items-center justify-center gap-1.5 text-xs font-bold py-2.5 px-1 rounded-xl transition duration-150 whitespace-nowrap min-w-fit ${
                           courseDetailTab === tab.key
                             ? 'bg-white text-indigo-700 shadow-sm'
@@ -2142,8 +2168,14 @@ export default function App() {
                               >
                                 <div className="space-y-2.5">
                                   <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
-                                    {getStatusBadge(assign.status)}
-                                    
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      {getStatusBadge(assign.status)}
+                                      {assign.week_number && (
+                                        <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-lg">
+                                          สัปดาห์ที่ {assign.week_number}
+                                        </span>
+                                      )}
+                                    </div>
                                     <div className="flex items-center gap-1 text-xs text-slate-500 font-medium">
                                       <Clock size={12} />
                                       <span>กำหนดส่ง: <b className="text-slate-800 font-semibold">{assign.due_date}</b></span>
@@ -2285,6 +2317,11 @@ export default function App() {
                                       {alType && (
                                         <span className="text-[10px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-lg">{alType.name}</span>
                                       )}
+                                      {act.week_number && (
+                                        <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-lg">
+                                          สัปดาห์ที่ {act.week_number}
+                                        </span>
+                                      )}
                                       {isDue ? (
                                         <span className="inline-flex items-center gap-1 text-[10px] font-bold text-red-700 bg-red-50 border border-red-100 px-2.5 py-1 rounded-lg">
                                           <AlertCircle size={9} />
@@ -2389,7 +2426,7 @@ export default function App() {
                         </div>
                         {role === 'admin' && (
                           <button
-                            onClick={() => { setEditingActivity(null); setActivityForm({ type_id: '', title: '', description: '', duration: '', file_url: '' }); setActivityFiles([]); setActivityIsAssignment(false); setActivityDueDate(''); setActivityUploadError(''); setShowActivityModal(true); }}
+                            onClick={() => { setEditingActivity(null); setActivityForm({ type_id: '', title: '', description: '', duration: '', week_number: 1, file_url: '' }); setActivityFiles([]); setActivityIsAssignment(false); setActivityDueDate(''); setActivityUploadError(''); setShowActivityModal(true); }}
                             className="flex items-center gap-1.5 text-xs font-bold text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 px-3 py-1.5 rounded-xl transition-all"
                           >
                             <Plus size={14} />
@@ -2409,6 +2446,11 @@ export default function App() {
                                   <h4 className="text-xs font-bold text-slate-900 truncate">{act.title}</h4>
                                 </div>
                                 <div className="flex items-center gap-2 shrink-0">
+                                  {act.week_number && (
+                                    <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-lg">
+                                      สัปดาห์ที่ {act.week_number}
+                                    </span>
+                                  )}
                                   {act.duration && (
                                     <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-600 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-lg">
                                       <Timer size={10} />
@@ -2451,6 +2493,17 @@ export default function App() {
                         </div>
                       )}
                     </div>
+                  )}
+
+                  {/* Teaching Plan Tab */}
+                  {courseDetailTab === 'plan' && activeCourse && (
+                    <TeachingPlanTab
+                      course={activeCourse}
+                      materials={activeCourseMaterials}
+                      activities={activeCourseActivities}
+                      assignments={activeCourseAssignments}
+                      semesterSchedules={semesterSchedules}
+                    />
                   )}
 
                 </div>
@@ -3099,7 +3152,7 @@ export default function App() {
                 {editingAssignment ? `แก้ไขงานมอบหมาย: ${editingAssignment.title.slice(0, 25)}…` : 'มอบหมายงานให้นักศึกษา (Add Assignment)'}
               </h3>
               <button
-                onClick={() => { setShowAssignmentModal(false); setEditingAssignment(null); setAssignmentForm({ title: '', description: '', due_date: '2026-06-30', attachment_url: '', status: 'open' }); }}
+                onClick={() => { setShowAssignmentModal(false); setEditingAssignment(null); setAssignmentForm({ title: '', description: '', due_date: '2026-06-30', week_number: 1, attachment_url: '', status: 'open' }); }}
                 className="p-1.5 rounded-lg hover:bg-white/10 text-white/80 hover:text-white transition"
               >
                 <X size={15} />
@@ -3134,9 +3187,22 @@ export default function App() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-3">
                 <div className="space-y-1">
-                  <label htmlFor="assign-due" className="block text-xs font-semibold text-slate-700">วันครบเขตกำหนดส่ง *</label>
+                  <label htmlFor="assign-week" className="block text-xs font-semibold text-slate-700">สัปดาห์ที่</label>
+                  <select
+                    id="assign-week"
+                    value={assignmentForm.week_number}
+                    onChange={(e) => setAssignmentForm({ ...assignmentForm, week_number: Number(e.target.value) })}
+                    className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-2 py-2.5 select-chevron"
+                  >
+                    {Array.from({ length: 16 }, (_, i) => i + 1).map(w => (
+                      <option key={w} value={w}>{w}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label htmlFor="assign-due" className="block text-xs font-semibold text-slate-700">กำหนดส่ง *</label>
                   <input
                     id="assign-due"
                     type="date"
@@ -3147,16 +3213,16 @@ export default function App() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label htmlFor="assign-status" className="block text-xs font-semibold text-slate-700">สถานะเปิดงาน *</label>
+                  <label htmlFor="assign-status" className="block text-xs font-semibold text-slate-700">สถานะ *</label>
                   <select
                     id="assign-status"
                     value={assignmentForm.status}
                     onChange={(e) => setAssignmentForm({ ...assignmentForm, status: e.target.value as AssignmentStatus })}
                     className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-2 py-2.5 select-chevron"
                   >
-                    <option value="open">เปิดรับส่ง (Open)</option>
-                    <option value="upcoming">เร็วๆ นี้ (Upcoming)</option>
-                    <option value="closed">ปิดรับงาน (Closed)</option>
+                    <option value="open">เปิดรับส่ง</option>
+                    <option value="upcoming">เร็วๆ นี้</option>
+                    <option value="closed">ปิดรับงาน</option>
                   </select>
                 </div>
               </div>
@@ -3176,7 +3242,7 @@ export default function App() {
               <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => { setShowAssignmentModal(false); setEditingAssignment(null); setAssignmentForm({ title: '', description: '', due_date: '2026-06-30', attachment_url: '', status: 'open' }); }}
+                  onClick={() => { setShowAssignmentModal(false); setEditingAssignment(null); setAssignmentForm({ title: '', description: '', due_date: '2026-06-30', week_number: 1, attachment_url: '', status: 'open' }); }}
                   className="text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-medium px-4 py-2.5 rounded-xl transition"
                 >
                   ย้อนกลับ
@@ -3268,6 +3334,20 @@ export default function App() {
                   placeholder="เช่น 30 นาที, 1 ชั่วโมง"
                   className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-green-500 focus:outline-none"
                 />
+              </div>
+
+              {/* Week number */}
+              <div className="space-y-1">
+                <label className="block text-xs font-semibold text-slate-700">สัปดาห์ที่มอบหมาย</label>
+                <select
+                  value={activityForm.week_number}
+                  onChange={e => setActivityForm(f => ({ ...f, week_number: Number(e.target.value) }))}
+                  className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-green-500 focus:outline-none select-chevron"
+                >
+                  {Array.from({ length: 16 }, (_, i) => i + 1).map(w => (
+                    <option key={w} value={w}>สัปดาห์ที่ {w}</option>
+                  ))}
+                </select>
               </div>
 
               {/* Is Assignment checkbox */}
