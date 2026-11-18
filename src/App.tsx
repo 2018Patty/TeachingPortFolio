@@ -121,6 +121,7 @@ export default function App() {
   const [enrollCodeInput, setEnrollCodeInput] = useState('');
   const [enrollCodeError, setEnrollCodeError] = useState('');
   const [showEnrollCodePassword, setShowEnrollCodePassword] = useState(false);
+  const [showAdminPassword, setShowAdminPassword] = useState(false);
   const [pendingEnrollCourseId, setPendingEnrollCourseId] = useState<string | null>(null);
 
   // Student tracking state
@@ -835,9 +836,19 @@ export default function App() {
   const activeCourseReflections = reflections.filter((r: TeachingReflection) => r.course_id === selectedCourseId);
 
   // 7. Security and Authentication handlers
-  const handleAdminLogin = () => {
-    const storedPw = siteProfile.admin_password || 'admin123';
+  const handleAdminLogin = async () => {
+    // Always compare with the latest password in the DB — the copy loaded with the
+    // page can be stale (e.g. password was reset while the page was open).
+    let storedPw = siteProfile.admin_password || 'admin123';
+    try {
+      const { data } = await supabase.from('site_settings').select('admin_password').eq('id', 1).maybeSingle();
+      if (data?.admin_password) {
+        storedPw = data.admin_password;
+        setSiteProfile((prev: SiteProfile) => ({ ...prev, admin_password: data.admin_password }));
+      }
+    } catch { /* offline — fall back to the loaded value */ }
     if (adminPassword.trim() === storedPw.trim()) {
+      setShowAdminPassword(false);
       // Guard ref immediately so SIGNED_OUT callback cannot override admin role
       roleRef.current = 'admin';
       // Fire-and-forget: clear any student OAuth session without blocking
@@ -2616,14 +2627,26 @@ export default function App() {
 
               <div className="space-y-1.5">
                 <label className="block text-xs font-semibold text-slate-700">พิมพ์รหัสผ่านเพื่อจำลองบทบาท</label>
-                <input
-                  type="password"
-                  value={adminPassword}
-                  onChange={(e) => setAdminPassword(e.target.value)}
-                  placeholder="กรอกรหัสผ่าน Admin"
-                  className="w-full text-xs font-bold border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-slate-900"
-                  onKeyDown={(e) => { if (e.key === 'Enter') handleAdminLogin(); }}
-                />
+                <div className="relative">
+                  <input
+                    type={showAdminPassword ? 'text' : 'password'}
+                    value={adminPassword}
+                    onChange={(e) => { setAdminPassword(e.target.value); setLoginError(''); }}
+                    placeholder="กรอกรหัสผ่าน Admin"
+                    autoComplete="current-password"
+                    className="w-full text-xs font-bold border border-slate-200 rounded-xl px-4 py-3 pr-11 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-slate-900"
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleAdminLogin(); }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowAdminPassword(p => !p)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600"
+                    title={showAdminPassword ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน'}
+                    aria-label={showAdminPassword ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน'}
+                  >
+                    {showAdminPassword ? <EyeOff size={16} /> : <EyeIcon size={16} />}
+                  </button>
+                </div>
                 <span className="text-[10px] text-slate-400 mt-1 block">💡 ใช้รหัสผ่าน Admin ล่าสุดที่ตั้งไว้</span>
               </div>
 
