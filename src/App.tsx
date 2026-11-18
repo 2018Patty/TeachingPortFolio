@@ -2624,7 +2624,7 @@ export default function App() {
                   className="w-full text-xs font-bold border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-slate-900"
                   onKeyDown={(e) => { if (e.key === 'Enter') handleAdminLogin(); }}
                 />
-                <span className="text-[10px] text-slate-400 mt-1 block">💡 รหัสผ่านเริ่มต้น: <b>admin123</b> (เปลี่ยนได้ในหน้า BackOffice)</span>
+                <span className="text-[10px] text-slate-400 mt-1 block">💡 ใช้รหัสผ่าน Admin ล่าสุดที่ตั้งไว้ (หากเคยเปลี่ยนรหัส รหัสเริ่มต้น admin123 จะใช้ไม่ได้แล้ว)</span>
               </div>
 
               {loginError && (
