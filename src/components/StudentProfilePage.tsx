@@ -10,6 +10,7 @@ import {
   StudentCourseVisit, AssignmentSubmission, MaterialType, ActiveLearning,
 } from '../types';
 import { supabase } from '@/lib/supabase';
+import { studentGroupInCourse } from '../utils/enrollGroups';
 
 // ─── Avatar helpers ────────────────────────────────────────────────────────────
 
@@ -405,6 +406,14 @@ export const StudentProfilePage: React.FC<Props> = ({
                                 <span className="text-[10px] text-slate-400 font-medium">
                                   {course.semester_id}/{course.year}
                                 </span>
+                                {(() => {
+                                  const g = studentGroupInCourse(visits, studentProfile.id, course.course_id);
+                                  return g !== null && (
+                                    <span className="text-[10px] font-bold text-violet-700 bg-violet-50 border border-violet-100 px-2 py-0.5 rounded-full">
+                                      กลุ่ม {g}
+                                    </span>
+                                  );
+                                })()}
                               </div>
                               <p className="text-sm font-bold text-slate-800 leading-snug line-clamp-1">
                                 {course.course_name_th}

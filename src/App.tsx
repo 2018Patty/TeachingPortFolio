@@ -41,7 +41,8 @@ import {
   CheckCircle2,
   AlertCircle as AlertCircleIcon,
   Loader2,
-  File as FileIcon
+  File as FileIcon,
+  Users as UsersIcon
 } from 'lucide-react';
 
 import { Role, StudentProfile, StudentCourseVisit, AssignmentSubmission, Course, Material, Assignment, MaterialType, AssignmentStatus, SiteProfile, Question, Reply, ActiveLearning, TeachingReflection, AL_TYPES, SemesterSchedule } from './types';
@@ -54,7 +55,7 @@ import { DashboardPage } from './components/DashboardPage';
 import { StudentAuthModal } from './components/StudentAuthModal';
 import {
   courseHasCode, matchGroupCode, makeVisitId, groupCount, generateEnrollCode,
-  parseGroupCodes, joinGroupCodes,
+  parseGroupCodes, joinGroupCodes, codesIdentifyGroup,
 } from './utils/enrollGroups';
 import { StudentProfilePage } from './components/StudentProfilePage';
 import { BackOffice } from './components/BackOffice';
@@ -122,6 +123,8 @@ export default function App() {
   const [enrollCodeError, setEnrollCodeError] = useState('');
   const [showEnrollCodePassword, setShowEnrollCodePassword] = useState(false);
   const [showAdminPassword, setShowAdminPassword] = useState(false);
+  // Course with several groups but no per-group codes → student picks their group
+  const [pendingGroupCourseId, setPendingGroupCourseId] = useState<string | null>(null);
   const [adminLoggingIn, setAdminLoggingIn] = useState(false);
   const [pendingEnrollCourseId, setPendingEnrollCourseId] = useState<string | null>(null);
 
@@ -586,8 +589,19 @@ export default function App() {
       setShowEnrollCodePassword(false);
       setShowEnrollCodeModal(true);
     } else {
-      proceedToCourse(courseId);
+      enterWithGroup(courseId, null);
     }
+  };
+
+  // Enter a course; if the group is still unknown and the course has several groups,
+  // ask the student to pick theirs first.
+  const enterWithGroup = (courseId: string, group: number | null) => {
+    const course = courses.find(c => c.course_id === courseId);
+    if (group === null && course && groupCount(course) > 1) {
+      setPendingGroupCourseId(courseId);
+      return;
+    }
+    proceedToCourse(courseId, group);
   };
 
   const handleEnrollCodeSubmit = (e: React.FormEvent) => {
@@ -602,7 +616,8 @@ export default function App() {
       setEnrollCodeError('');
       const cid = pendingEnrollCourseId;
       setPendingEnrollCourseId(null);
-      proceedToCourse(cid, group);
+      // Per-group codes decide the group; a shared code means the student picks it
+      enterWithGroup(cid, codesIdentifyGroup(course) ? group : null);
     } else {
       setEnrollCodeError('รหัสลงทะเบียนไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง');
     }
@@ -2770,6 +2785,51 @@ export default function App() {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* 5.1b Group picker — course has several groups without per-group codes */}
+      {pendingGroupCourseId && (() => {
+        const gCourse = courses.find(c => c.course_id === pendingGroupCourseId);
+        if (!gCourse) return null;
+        const n = groupCount(gCourse);
+        return (
+          <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+              <div className="bg-gradient-to-br from-violet-600 to-indigo-600 text-white px-6 pt-8 pb-6 text-center">
+                <div className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center mx-auto mb-3">
+                  <UsersIcon size={28} />
+                </div>
+                <h2 className="text-base font-extrabold">เลือกกลุ่มเรียนของคุณ</h2>
+                <p className="text-xs text-white/80 mt-1 font-medium">{gCourse.course_code} — {gCourse.course_name_th}</p>
+              </div>
+              <div className="p-6 space-y-4">
+                <p className="text-xs text-slate-600 text-center leading-relaxed">
+                  วิชานี้เปิดสอน {n} กลุ่ม กรุณาเลือกกลุ่มที่คุณลงทะเบียนเรียน<br />
+                  <span className="text-slate-400">(เลือกได้ครั้งเดียว หากเลือกผิดกรุณาแจ้งอาจารย์)</span>
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {Array.from({ length: n }, (_, i) => i + 1).map(g => (
+                    <button
+                      key={g}
+                      type="button"
+                      onClick={() => { setPendingGroupCourseId(null); proceedToCourse(gCourse.course_id, g); }}
+                      className="py-3 rounded-2xl border-2 border-violet-200 bg-violet-50 hover:bg-violet-100 hover:border-violet-400 text-violet-700 text-sm font-extrabold transition active:scale-[0.98]"
+                    >
+                      กลุ่ม {g}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPendingGroupCourseId(null)}
+                  className="w-full text-xs text-slate-500 hover:text-slate-800 py-2"
+                >
+                  ยกเลิก
+                </button>
+              </div>
             </div>
           </div>
         );

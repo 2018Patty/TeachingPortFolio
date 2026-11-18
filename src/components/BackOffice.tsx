@@ -99,6 +99,7 @@ const StudentDetailModal: React.FC<{
     ? `${student.first_name} ${student.last_name}`.trim() || student.email
     : studentId.slice(0, 8) + '...';
   const visitCount = visits.filter(v => v.student_id === studentId).length;
+  const studentGroup = visits.map(v => groupFromVisitId(v.visit_id)).find((g): g is number => g !== null) ?? null;
   const lastVisit = visits
     .filter(v => v.student_id === studentId)
     .sort((a, b) => (b.visited_at || '').localeCompare(a.visited_at || ''))
@@ -124,6 +125,9 @@ const StudentDetailModal: React.FC<{
               <div className="text-[11px] text-slate-400 mt-0.5">
                 {student?.student_id && <span className="font-mono">{student.student_id}</span>}
                 {student?.email && <span className="ml-2">{student.email}</span>}
+                <span className={`ml-2 px-2 py-0.5 rounded-full text-[10px] font-bold ${studentGroup !== null ? 'bg-violet-500 text-white' : 'bg-white/10 text-slate-300'}`}>
+                  {studentGroup !== null ? `กลุ่ม ${studentGroup}` : 'ไม่ระบุกลุ่ม'}
+                </span>
               </div>
             </div>
           </div>

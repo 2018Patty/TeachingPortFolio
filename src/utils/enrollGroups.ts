@@ -57,3 +57,21 @@ export const groupFromVisitId = (visitId?: string | null): number | null => {
   const m = /^v-g(\d+)-/.exec(visitId || '');
   return m ? Number(m[1]) : null;
 };
+
+/** True when every group has its own code, so the code alone tells the group. */
+export const codesIdentifyGroup = (course: Pick<Course, 'enrollment_code' | 'section'>): boolean => {
+  const n = groupCount(course);
+  const codes = parseGroupCodes(course.enrollment_code).filter(Boolean);
+  return n <= 1 || codes.length >= n;
+};
+
+/** The group a student entered a course with (from their visit records), or null. */
+export const studentGroupInCourse = (
+  visits: { visit_id: string; student_id: string; course_id: string | null }[],
+  studentId: string,
+  courseId: string,
+): number | null =>
+  visits
+    .filter(v => v.student_id === studentId && v.course_id === courseId)
+    .map(v => groupFromVisitId(v.visit_id))
+    .find((g): g is number => g !== null) ?? null;

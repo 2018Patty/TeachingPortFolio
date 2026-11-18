@@ -5,6 +5,7 @@ import {
   GraduationCap, Info, X, Timer, Download
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { studentGroupInCourse } from '../utils/enrollGroups';
 import {
   Course, Material, Assignment, Question, ActiveLearning,
   Reply, ActiveLearningType, AL_TYPES, StudentCourseVisit, StudentProfile
@@ -708,11 +709,10 @@ export const DashboardPage: React.FC<DashboardProps> = ({
                       <th className="text-left px-4 py-2.5 font-bold text-slate-500">ชื่อ-สกุล</th>
                       <th className="text-left px-3 py-2.5 font-bold text-slate-500">รหัสนักศึกษา</th>
                       <th className="text-left px-3 py-2.5 font-bold text-slate-500">อีเมล</th>
-                      <th className="text-center px-3 py-2.5 font-bold text-slate-500">วิชาที่เข้าเรียน</th>
+                      <th className="text-center px-3 py-2.5 font-bold text-slate-500">วิชา · กลุ่ม</th>
                     </tr></thead>
                     <tbody>
                       {relevantStudents.map((s, i) => {
-                        const courseCount = new Set(visits.filter(v => v.student_id === s.id && filteredCourses.some(c => c.course_id === v.course_id)).map(v => v.course_id)).size;
                         const notEnrolled = !allEnrolledIds.has(s.id);
                         const name = `${s.first_name || ''} ${s.last_name || ''}`.trim();
                         return (
@@ -730,7 +730,20 @@ export const DashboardPage: React.FC<DashboardProps> = ({
                             <td className="px-3 py-2.5 text-center">
                               {notEnrolled
                                 ? <span className="font-semibold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-lg whitespace-nowrap">ยังไม่เข้าวิชา</span>
-                                : <span className="font-bold text-violet-600 bg-violet-50 px-2 py-0.5 rounded-lg">{courseCount}</span>}
+                                : (
+                                  <div className="flex flex-wrap justify-center gap-1">
+                                    {filteredCourses
+                                      .filter(c => visits.some(v => v.student_id === s.id && v.course_id === c.course_id))
+                                      .map(c => {
+                                        const g = studentGroupInCourse(visits, s.id, c.course_id);
+                                        return (
+                                          <span key={c.course_id} className="text-[10px] font-semibold text-violet-700 bg-violet-50 border border-violet-100 px-1.5 py-0.5 rounded-md whitespace-nowrap">
+                                            {c.course_code} · {g !== null ? `กลุ่ม ${g}` : 'ไม่ระบุกลุ่ม'}
+                                          </span>
+                                        );
+                                      })}
+                                  </div>
+                                )}
                             </td>
                           </tr>
                         );
