@@ -122,6 +122,7 @@ export default function App() {
   const [enrollCodeError, setEnrollCodeError] = useState('');
   const [showEnrollCodePassword, setShowEnrollCodePassword] = useState(false);
   const [showAdminPassword, setShowAdminPassword] = useState(false);
+  const [adminLoggingIn, setAdminLoggingIn] = useState(false);
   const [pendingEnrollCourseId, setPendingEnrollCourseId] = useState<string | null>(null);
 
   // Student tracking state
@@ -449,9 +450,13 @@ export default function App() {
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
+      (event, session) => {
         if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session?.user) {
-          await applyStudentSession(session.user);
+          // Never await Supabase calls inside this callback — supabase-js holds its
+          // auth lock while the callback runs, so every later query (e.g. the admin
+          // password check) would hang. Defer the work until the lock is released.
+          const user = session.user;
+          setTimeout(() => { applyStudentSession(user); }, 0);
         } else if (event === 'SIGNED_OUT') {
           // Only reset to guest if WE are not in the middle of an admin login
           if (mounted && roleRef.current !== 'admin') {
@@ -839,14 +844,22 @@ export default function App() {
   const handleAdminLogin = async () => {
     // Always compare with the latest password in the DB — the copy loaded with the
     // page can be stale (e.g. password was reset while the page was open).
+    if (adminLoggingIn) return;
+    setAdminLoggingIn(true);
+    setLoginError('');
     let storedPw = siteProfile.admin_password || 'admin123';
     try {
-      const { data } = await supabase.from('site_settings').select('admin_password').eq('id', 1).maybeSingle();
-      if (data?.admin_password) {
-        storedPw = data.admin_password;
-        setSiteProfile((prev: SiteProfile) => ({ ...prev, admin_password: data.admin_password }));
+      const fetchPw = supabase.from('site_settings').select('admin_password').eq('id', 1).maybeSingle();
+      // Give up after 5 s and use the value loaded with the page
+      const timeout = new Promise<null>(resolve => setTimeout(() => resolve(null), 5000));
+      const res = await Promise.race([fetchPw, timeout]);
+      const fresh = res && 'data' in res ? res.data?.admin_password : undefined;
+      if (fresh) {
+        storedPw = fresh;
+        setSiteProfile((prev: SiteProfile) => ({ ...prev, admin_password: fresh }));
       }
     } catch { /* offline — fall back to the loaded value */ }
+    setAdminLoggingIn(false);
     if (adminPassword.trim() === storedPw.trim()) {
       setShowAdminPassword(false);
       // Guard ref immediately so SIGNED_OUT callback cannot override admin role
@@ -2668,9 +2681,10 @@ export default function App() {
                 <button
                   type="button"
                   onClick={handleAdminLogin}
-                  className="text-xs text-white bg-[#4F46E5] hover:bg-indigo-700 font-bold px-5 py-2.5 rounded-xl transition"
+                  disabled={adminLoggingIn}
+                  className="text-xs text-white bg-[#4F46E5] hover:bg-indigo-700 font-bold px-5 py-2.5 rounded-xl transition disabled:opacity-60 disabled:cursor-wait"
                 >
-                  ยืนยันตัวตน
+                  {adminLoggingIn ? 'กำลังตรวจสอบ...' : 'ยืนยันตัวตน'}
                 </button>
               </div>
             </div>
