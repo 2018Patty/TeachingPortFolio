@@ -12,6 +12,7 @@ export interface StudentProfile {
   last_name: string;
   email: string;
   avatar_url?: string;
+  created_at?: string;   // set by the DB when the student registers
 }
 
 export interface SiteProfile {

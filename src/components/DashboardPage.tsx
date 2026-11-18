@@ -691,14 +691,15 @@ export const DashboardPage: React.FC<DashboardProps> = ({
 
         // students
         if (drillModal === 'students') {
-          const relevantStudents = allStudents.filter(s =>
-            visits.some(v => filteredCourses.some(c => c.course_id === v.course_id) && v.student_id === s.id)
+          // All registered students: those in a course first, then those not yet in any course
+          const relevantStudents = [...allStudents].sort((a, b) =>
+            Number(!allEnrolledIds.has(a.id)) - Number(!allEnrolledIds.has(b.id))
           );
           return (
             <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-white w-full max-w-2xl rounded-3xl shadow-xl overflow-hidden flex flex-col max-h-[85vh]">
                 <div className="bg-violet-600 text-white px-6 py-4 flex items-center justify-between shrink-0">
-                  <div className="flex items-center gap-2"><Users size={16} /><span className="text-sm font-bold">ผู้เรียนในรายวิชา</span><span className="text-[11px] bg-white/20 px-2 py-0.5 rounded-full">{relevantStudents.length} คน</span></div>
+                  <div className="flex items-center gap-2"><Users size={16} /><span className="text-sm font-bold">รายชื่อนักศึกษา</span><span className="text-[11px] bg-white/20 px-2 py-0.5 rounded-full">เข้าวิชาแล้ว {totalEnrolledStudents} คน</span>{notEnrolledCount > 0 && <span className="text-[11px] bg-amber-400/90 text-amber-950 px-2 py-0.5 rounded-full">ยังไม่เข้าวิชา {notEnrolledCount} คน</span>}</div>
                   <button onClick={close}><X size={15} /></button>
                 </div>
                 <div className="overflow-y-auto flex-1">
@@ -712,16 +713,29 @@ export const DashboardPage: React.FC<DashboardProps> = ({
                     <tbody>
                       {relevantStudents.map((s, i) => {
                         const courseCount = new Set(visits.filter(v => v.student_id === s.id && filteredCourses.some(c => c.course_id === v.course_id)).map(v => v.course_id)).size;
+                        const notEnrolled = !allEnrolledIds.has(s.id);
+                        const name = `${s.first_name || ''} ${s.last_name || ''}`.trim();
                         return (
-                          <tr key={s.id} className={`border-b border-slate-50 ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'}`}>
-                            <td className="px-4 py-2.5 font-semibold text-slate-800">{s.first_name} {s.last_name}</td>
-                            <td className="px-3 py-2.5 text-slate-500">{s.student_id}</td>
+                          <tr key={s.id} className={`border-b border-slate-50 ${notEnrolled ? 'bg-amber-50/40' : i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'}`}>
+                            <td className="px-4 py-2.5 font-semibold text-slate-800">
+                              {name || <span className="text-slate-400 italic font-normal">ยังไม่กรอกชื่อ</span>}
+                              {s.created_at && (
+                                <div className="text-[10px] font-normal text-slate-400">
+                                  สมัครเมื่อ {new Date(s.created_at).toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short', year: 'numeric' })}
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-3 py-2.5 text-slate-500">{s.student_id || '-'}</td>
                             <td className="px-3 py-2.5 text-slate-400 text-[10px]">{s.email}</td>
-                            <td className="px-3 py-2.5 text-center"><span className="font-bold text-violet-600 bg-violet-50 px-2 py-0.5 rounded-lg">{courseCount}</span></td>
+                            <td className="px-3 py-2.5 text-center">
+                              {notEnrolled
+                                ? <span className="font-semibold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-lg whitespace-nowrap">ยังไม่เข้าวิชา</span>
+                                : <span className="font-bold text-violet-600 bg-violet-50 px-2 py-0.5 rounded-lg">{courseCount}</span>}
+                            </td>
                           </tr>
                         );
                       })}
-                      {relevantStudents.length === 0 && <tr><td colSpan={4} className="px-4 py-6 text-center text-slate-400 italic text-xs">ยังไม่มีผู้เรียนในภาค/ปีที่เลือก</td></tr>}
+                      {relevantStudents.length === 0 && <tr><td colSpan={4} className="px-4 py-6 text-center text-slate-400 italic text-xs">ยังไม่มีนักศึกษาสมัครสมาชิก</td></tr>}
                     </tbody>
                   </table>
                 </div>
