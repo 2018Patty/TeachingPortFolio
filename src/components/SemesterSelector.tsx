@@ -11,6 +11,8 @@ interface SemesterSelectorProps {
   selectedYear: number;
   yearsList: number[];
   onChange: (semester: number, year: number) => void;
+  instructorName?: string;
+  instructorFaculty?: string;
 }
 
 export const SemesterSelector: React.FC<SemesterSelectorProps> = ({
@@ -18,6 +20,8 @@ export const SemesterSelector: React.FC<SemesterSelectorProps> = ({
   selectedYear,
   yearsList,
   onChange,
+  instructorName,
+  instructorFaculty,
 }) => {
   const handleSemesterChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     onChange(Number(e.target.value), selectedYear);
@@ -44,7 +48,7 @@ export const SemesterSelector: React.FC<SemesterSelectorProps> = ({
               เลือกปีการศึกษา / เทอมที่สอน
             </h3>
             <p className="text-xs text-slate-400 italic">
-              ผศ.ดร.ภัทราพร วรินทรเวช — ภาควิชาวิศวกรรมคอมพิวเตอร์
+              {[instructorName, instructorFaculty].filter(Boolean).join(' — ')}
             </p>
           </div>
         </div>

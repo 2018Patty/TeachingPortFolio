@@ -1505,6 +1505,8 @@ export default function App() {
                 selectedYear={year}
                 yearsList={yearsList}
                 onChange={handleSemesterYearChange}
+                instructorName={siteProfile.profile_name}
+                instructorFaculty={siteProfile.profile_faculty}
               />
 
               {/* Course block title and command controls */}
