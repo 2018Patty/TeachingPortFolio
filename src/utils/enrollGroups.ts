@@ -75,3 +75,7 @@ export const studentGroupInCourse = (
     .filter(v => v.student_id === studentId && v.course_id === courseId)
     .map(v => groupFromVisitId(v.visit_id))
     .find((g): g is number => g !== null) ?? null;
+
+/** Same visit id with the group part replaced (or removed when group is null). */
+export const withGroupInVisitId = (visitId: string, group: number | null): string =>
+  visitId.replace(/^v-(g\d+-)?/, group ? `v-g${group}-` : 'v-');

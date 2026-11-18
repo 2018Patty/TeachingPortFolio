@@ -50,6 +50,7 @@ interface BackOfficeProps {
   onSavePdpa: (data: Pick<SiteProfile, 'pdpa_purposes' | 'pdpa_retention' | 'pdpa_third_party' | 'pdpa_updated_at' | 'pdpa_effective_date' | 'pdpa_version'>) => Promise<void>;
   semesterSchedules: SemesterSchedule[];
   onSaveSchedules: (schedules: SemesterSchedule[]) => Promise<void>;
+  onChangeStudentGroup: (studentId: string, courseId: string, group: number | null) => Promise<void>;
 }
 
 // ─── Sidebar section config ───────────────────────────────────────────────────
@@ -295,7 +296,8 @@ const StudentsSection: React.FC<{
   assignments: Assignment[];
   students: StudentProfile[];
   onSelectStudent: (sid: string) => void;
-}> = ({ course, visits, submissions, assignments, students, onSelectStudent }) => {
+  onChangeGroup: (sid: string, group: number | null) => Promise<void>;
+}> = ({ course, visits, submissions, assignments, students, onSelectStudent, onChangeGroup }) => {
   const courseVisits = visits.filter(v => v.course_id === course.course_id);
   const courseSubmissions = submissions.filter(s => s.course_id === course.course_id);
 
@@ -317,6 +319,19 @@ const StudentsSection: React.FC<{
   }).sort((a, b) => (a.group ?? 999) - (b.group ?? 999));
 
   const [groupFilter, setGroupFilter] = useState<'all' | 'none' | number>('all');
+  const [savingGroupFor, setSavingGroupFor] = useState<string | null>(null);
+  const [groupError, setGroupError] = useState('');
+  const changeGroup = async (sid: string, value: string) => {
+    setSavingGroupFor(sid);
+    setGroupError('');
+    try {
+      await onChangeGroup(sid, value === '' ? null : Number(value));
+    } catch (err) {
+      setGroupError(`เปลี่ยนกลุ่มไม่สำเร็จ: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSavingGroupFor(null);
+    }
+  };
   const nGroups = groupCount(course);
   const groupCodes = parseGroupCodes(course.enrollment_code);
   const groupNumbers = Array.from(new Set([
@@ -361,8 +376,9 @@ const StudentsSection: React.FC<{
           <div className="px-5 py-3.5 border-b border-slate-100 flex items-center gap-2">
             <Users size={14} className="text-slate-500" />
             <span className="text-xs font-bold text-slate-700">รายชื่อนักศึกษา</span>
-            <span className="text-[10px] text-slate-400 ml-1">— คลิกชื่อเพื่อดูรายละเอียด</span>
+            <span className="text-[10px] text-slate-400 ml-1">— คลิกชื่อเพื่อดูรายละเอียด · เปลี่ยนกลุ่มได้ที่คอลัมน์ "กลุ่ม"</span>
           </div>
+          {groupError && <div className="px-5 py-2 text-[11px] text-red-600 font-medium bg-red-50 border-b border-red-100">{groupError}</div>}
           {/* Group filter + codes */}
           <div className="px-5 py-3 border-b border-slate-100 flex flex-wrap items-center gap-1.5">
             {([['all', `ทั้งหมด (${rows.length})`]] as [typeof groupFilter, string][])
@@ -436,10 +452,21 @@ const StudentsSection: React.FC<{
                       <td className="px-4 py-3 text-slate-600 font-mono text-[11px]">
                         {student?.student_id || '—'}
                       </td>
-                      <td className="px-4 py-3 text-center">
-                        {group !== null
-                          ? <span className="px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 font-bold text-[11px]">{group}</span>
-                          : <span className="text-slate-300 text-[11px]">—</span>}
+                      <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
+                        <select
+                          value={group ?? ''}
+                          disabled={savingGroupFor === sid}
+                          onChange={e => changeGroup(sid, e.target.value)}
+                          title="เปลี่ยนกลุ่มของนักศึกษา"
+                          className={`text-[11px] font-bold rounded-lg border px-1.5 py-1 cursor-pointer focus:outline-none focus:ring-2 focus:ring-violet-400 disabled:opacity-50 disabled:cursor-wait ${
+                            group !== null ? 'bg-violet-50 text-violet-700 border-violet-200' : 'bg-white text-slate-400 border-slate-200'
+                          }`}
+                        >
+                          <option value="">ไม่ระบุ</option>
+                          {Array.from({ length: Math.max(nGroups, group ?? 0) }, (_, k) => k + 1).map(g => (
+                            <option key={g} value={g}>กลุ่ม {g}</option>
+                          ))}
+                        </select>
                       </td>
                       <td className="px-4 py-3 text-center">
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-bold text-[11px]">
@@ -1158,7 +1185,7 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
   courses, materials, assignments, questions, replies, activities, reflections,
   visits, loginLogs, submissions, students, siteProfile,
   onNavigateCourses, onNavigateToCourse, onEditCourse, onAddCourse, onSavePdpa,
-  semesterSchedules, onSaveSchedules,
+  semesterSchedules, onSaveSchedules, onChangeStudentGroup,
 }) => {
   const [view, setView] = useState<BoView>({ type: 'dashboard' });
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -1244,6 +1271,7 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
         visits={visits} submissions={submissions}
         assignments={cAssignments} students={students}
         onSelectStudent={(sid) => setDetailStudent({ sid, courseId })}
+        onChangeGroup={(sid, g) => onChangeStudentGroup(sid, courseId, g)}
       />
     );
 

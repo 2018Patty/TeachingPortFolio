@@ -55,7 +55,7 @@ import { DashboardPage } from './components/DashboardPage';
 import { StudentAuthModal } from './components/StudentAuthModal';
 import {
   courseHasCode, matchGroupCode, makeVisitId, groupCount, generateEnrollCode,
-  parseGroupCodes, joinGroupCodes, codesIdentifyGroup,
+  parseGroupCodes, joinGroupCodes, codesIdentifyGroup, withGroupInVisitId,
 } from './utils/enrollGroups';
 import { StudentProfilePage } from './components/StudentProfilePage';
 import { BackOffice } from './components/BackOffice';
@@ -291,6 +291,20 @@ export default function App() {
   const handleSavePdpa = async (data: Pick<SiteProfile, 'pdpa_purposes' | 'pdpa_retention' | 'pdpa_third_party' | 'pdpa_updated_at' | 'pdpa_effective_date' | 'pdpa_version'>) => {
     // Bump version on every policy save so all users see the consent banner again
     await handleSaveProfile({ ...data, pdpa_version: new Date().toISOString() });
+  };
+
+  // Admin moves a student to another group: rewrite the group part of that
+  // student's visit ids for the course (the group is encoded in visit_id).
+  const handleChangeStudentGroup = async (studentId: string, courseId: string, group: number | null) => {
+    const rows = visits.filter(v => v.student_id === studentId && v.course_id === courseId);
+    const changes = rows
+      .map(v => ({ from: v.visit_id, to: withGroupInVisitId(v.visit_id, group) }))
+      .filter(c => c.from !== c.to);
+    for (const c of changes) {
+      const { error } = await supabase.from('student_course_visits').update({ visit_id: c.to }).eq('visit_id', c.from);
+      if (error) throw new Error(error.message);
+      setVisits(prev => prev.map(v => (v.visit_id === c.from ? { ...v, visit_id: c.to } : v)));
+    }
   };
 
   const handleSaveSchedules = async (schedules: SemesterSchedule[]) => {
@@ -1440,6 +1454,7 @@ export default function App() {
           onSavePdpa={handleSavePdpa}
           semesterSchedules={semesterSchedules}
           onSaveSchedules={handleSaveSchedules}
+          onChangeStudentGroup={handleChangeStudentGroup}
         />
       )}
 
