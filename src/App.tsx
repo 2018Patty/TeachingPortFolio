@@ -329,6 +329,10 @@ export default function App() {
     roleRef.current = role;
   }, [role]);
 
+  // Student login → jump to the latest semester (handled in the courses effect below)
+  const [latestTermRequest, setLatestTermRequest] = useState(0);
+  const studentLatestTermAppliedRef = useRef(false);
+
   // Supabase Auth listener for student sessions
   useEffect(() => {
     let mounted = true;
@@ -394,6 +398,13 @@ export default function App() {
       if (!profile.student_id && !pendingCourseIdRef.current) {
         setCurrentPage('student-profile');
       }
+
+      // Every time a student enters (once per page load), show the latest semester —
+      // unless they logged in to open a specific course.
+      if (!studentLatestTermAppliedRef.current && !pendingCourseIdRef.current) {
+        studentLatestTermAppliedRef.current = true;
+        setLatestTermRequest(n => n + 1);
+      }
     };
 
     // Explicit session check: catches OAuth redirect sessions where
@@ -426,6 +437,7 @@ export default function App() {
 
   // Update dynamic academic years from course dataset; auto-select the most recent year/semester
   const initialTermAppliedRef = useRef(false);
+  const handledLatestTermRequestRef = useRef(0);
   useEffect(() => {
     if (courses.length === 0) return;
     const yearsInDB = courses.map(c => c.year);
@@ -439,14 +451,23 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     const hasUrlTerm = params.has('semester') || params.has('year');
     const hasMatch = courses.some(c => c.semester_id === semester && c.year === year);
-    if ((isFirstLoad && !hasUrlTerm) || !hasMatch) {
+    const studentLoginRequest = latestTermRequest !== handledLatestTermRequestRef.current;
+    handledLatestTermRequestRef.current = latestTermRequest;
+    if (studentLoginRequest && hasUrlTerm) {
+      // Drop a stale ?semester=&year= so the address bar matches the latest term
+      const url = new URL(window.location.href);
+      url.searchParams.delete('semester');
+      url.searchParams.delete('year');
+      window.history.replaceState({}, '', url.toString());
+    }
+    if ((isFirstLoad && !hasUrlTerm) || studentLoginRequest || !hasMatch) {
       const sorted = [...courses].sort((a, b) =>
         b.year !== a.year ? b.year - a.year : b.semester_id - a.semester_id
       );
       setSemester(sorted[0].semester_id);
       setYear(sorted[0].year);
     }
-  }, [courses]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [courses, latestTermRequest]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // After login, navigate to the course that triggered the login prompt (with enrollment code gate)
   useEffect(() => {
