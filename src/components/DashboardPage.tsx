@@ -77,6 +77,7 @@ export const DashboardPage: React.FC<DashboardProps> = ({
   const allEnrolledIds = new Set<string>();
   Object.values(enrolledSetByCourse).forEach(s => s.forEach(id => allEnrolledIds.add(id)));
   const totalEnrolledStudents = allEnrolledIds.size;
+  const notEnrolledCount = allStudents.filter(s => !allEnrolledIds.has(s.id)).length;
   const filteredQ = questions.filter(q => courseIds.includes(q.course_id));
   const filteredAct = activities.filter(a => courseIds.includes(a.course_id));
   const filteredMat = materials.filter(m => courseIds.includes(m.course_id));
@@ -155,9 +156,9 @@ export const DashboardPage: React.FC<DashboardProps> = ({
         />
         <MetricCard
           icon={<Users size={18} className="text-violet-600" />}
-          label="ผู้เรียนทั้งหมด"
+          label="ผู้เรียนในรายวิชา"
           value={totalEnrolledStudents}
-          sub={`ลงทะเบียน ${allStudents.length} คน`}
+          sub={`บัญชีนักศึกษา ${allStudents.length} คน${notEnrolledCount > 0 ? ` · ยังไม่เข้าวิชา ${notEnrolledCount} คน` : ''}`}
           color="bg-violet-50"
           onClick={() => setDrillModal('students')}
         />
@@ -697,7 +698,7 @@ export const DashboardPage: React.FC<DashboardProps> = ({
             <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-white w-full max-w-2xl rounded-3xl shadow-xl overflow-hidden flex flex-col max-h-[85vh]">
                 <div className="bg-violet-600 text-white px-6 py-4 flex items-center justify-between shrink-0">
-                  <div className="flex items-center gap-2"><Users size={16} /><span className="text-sm font-bold">ผู้เรียนทั้งหมด</span><span className="text-[11px] bg-white/20 px-2 py-0.5 rounded-full">{relevantStudents.length} คน</span></div>
+                  <div className="flex items-center gap-2"><Users size={16} /><span className="text-sm font-bold">ผู้เรียนในรายวิชา</span><span className="text-[11px] bg-white/20 px-2 py-0.5 rounded-full">{relevantStudents.length} คน</span></div>
                   <button onClick={close}><X size={15} /></button>
                 </div>
                 <div className="overflow-y-auto flex-1">
