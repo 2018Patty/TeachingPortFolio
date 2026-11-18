@@ -52,6 +52,10 @@ import { Footer } from './components/Footer';
 import { ProfilePage } from './components/ProfilePage';
 import { DashboardPage } from './components/DashboardPage';
 import { StudentAuthModal } from './components/StudentAuthModal';
+import {
+  courseHasCode, matchGroupCode, makeVisitId, groupCount, generateEnrollCode,
+  parseGroupCodes, joinGroupCodes,
+} from './utils/enrollGroups';
 import { StudentProfilePage } from './components/StudentProfilePage';
 import { BackOffice } from './components/BackOffice';
 import { PDPAConsentBanner } from './components/PDPAConsentBanner';
@@ -526,7 +530,7 @@ export default function App() {
 
   // Select a course and increment its view count; track student visit
   // Navigate to course and record the first visit (called after all gates pass)
-  const proceedToCourse = (courseId: string) => {
+  const proceedToCourse = (courseId: string, group: number | null = null) => {
     setCurrentPage('courses');
     setSelectedCourseId(courseId);
     setCourseDetailTab('info');
@@ -541,7 +545,7 @@ export default function App() {
     if (roleRef.current === 'student' && studentProfile?.id) {
       const alreadyHasVisit = visits.some(v => v.student_id === studentProfile.id && v.course_id === courseId);
       if (!alreadyHasVisit) {
-        const visit_id = `v-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+        const visit_id = makeVisitId(group);
         const visit: StudentCourseVisit = {
           visit_id,
           student_id: studentProfile.id,
@@ -569,7 +573,7 @@ export default function App() {
       return;
     }
     const course = courses.find(c => c.course_id === courseId);
-    if (course?.enrollment_code?.trim()) {
+    if (courseHasCode(course)) {
       setPendingEnrollCourseId(courseId);
       setEnrollCodeInput('');
       setEnrollCodeError('');
@@ -585,13 +589,14 @@ export default function App() {
     if (!pendingEnrollCourseId) return;
     const course = courses.find(c => c.course_id === pendingEnrollCourseId);
     if (!course) return;
-    if (enrollCodeInput.trim() === course.enrollment_code?.trim()) {
+    const group = matchGroupCode(course, enrollCodeInput);
+    if (group !== null) {
       setShowEnrollCodeModal(false);
       setEnrollCodeInput('');
       setEnrollCodeError('');
       const cid = pendingEnrollCourseId;
       setPendingEnrollCourseId(null);
-      proceedToCourse(cid);
+      proceedToCourse(cid, group);
     } else {
       setEnrollCodeError('รหัสลงทะเบียนไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง');
     }
@@ -1498,7 +1503,7 @@ export default function App() {
                               <span className="text-[10px] font-black uppercase tracking-widest opacity-60">
                                 COURSE ARCHIVE
                               </span>
-                              {course.enrollment_code?.trim() && (
+                              {courseHasCode(course) && (
                                 <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-amber-700 bg-amber-100 border border-amber-200 px-1.5 py-0.5 rounded-full">
                                   <KeyRound size={9} />
                                   <span>มีรหัส</span>
@@ -2935,29 +2940,54 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => {
-                      const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
-                      const digits = '23456789';
-                      let code = '';
-                      for (let i = 0; i < 3; i++) code += letters[Math.floor(Math.random() * letters.length)];
-                      for (let i = 0; i < 3; i++) code += digits[Math.floor(Math.random() * digits.length)];
-                      setCourseForm({ ...courseForm, enrollment_code: code });
+                      const n = groupCount({ section: courseForm.section });
+                      const codes: string[] = [];
+                      for (let i = 0; i < n; i++) codes.push(generateEnrollCode(codes));
+                      setCourseForm({ ...courseForm, enrollment_code: joinGroupCodes(codes) });
                     }}
                     className="flex items-center gap-1 text-[11px] font-bold text-amber-700 bg-amber-100 hover:bg-amber-200 border border-amber-300 px-2.5 py-1 rounded-lg transition"
                   >
                     <RefreshCw size={11} />
-                    สุ่มรหัส
+                    สร้างรหัส {groupCount({ section: courseForm.section })} กลุ่ม
                   </button>
                 </div>
-                <input
-                  id="course-enrollment-code"
-                  type="text"
-                  value={courseForm.enrollment_code}
-                  onChange={(e) => setCourseForm({ ...courseForm, enrollment_code: e.target.value })}
-                  placeholder="เช่น class2024 (ปล่อยว่างไว้ = ไม่ต้องใส่รหัส)"
-                  className="w-full text-xs text-slate-900 border border-amber-200 rounded-xl px-3.5 py-2.5 bg-white focus:ring-2 focus:ring-amber-400 focus:outline-none font-mono tracking-wider"
-                />
+                {(() => {
+                  const n = groupCount({ section: courseForm.section });
+                  const codes = parseGroupCodes(courseForm.enrollment_code);
+                  const extra = codes.length > n ? codes.slice(n).filter(Boolean).length : 0;
+                  return (
+                    <>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {Array.from({ length: n }, (_, i) => (
+                          <label key={i} className="flex items-center gap-2">
+                            <span className="text-[11px] font-semibold text-amber-800 whitespace-nowrap w-14">กลุ่ม {i + 1}</span>
+                            <input
+                              id={i === 0 ? 'course-enrollment-code' : undefined}
+                              type="text"
+                              value={codes[i] || ''}
+                              onChange={(e) => {
+                                const next = [...codes];
+                                while (next.length < n) next.push('');
+                                next[i] = e.target.value.replace(/,/g, '');
+                                setCourseForm({ ...courseForm, enrollment_code: joinGroupCodes(next) });
+                              }}
+                              placeholder="ว่าง = ไม่ใช้รหัส"
+                              className="w-full text-xs text-slate-900 border border-amber-200 rounded-xl px-3 py-2 bg-white focus:ring-2 focus:ring-amber-400 focus:outline-none font-mono tracking-wider"
+                            />
+                          </label>
+                        ))}
+                      </div>
+                      {extra > 0 && (
+                        <p className="text-[10px] text-red-600">
+                          มีรหัสของกลุ่มที่เกิน {n} กลุ่มอีก {extra} รหัส (ยังใช้เข้าได้) — กด "สร้างรหัส" ใหม่เพื่อให้ตรงกับจำนวนกลุ่ม
+                        </p>
+                      )}
+                    </>
+                  );
+                })()}
                 <p className="text-[10px] text-amber-600 leading-relaxed">
-                  นักศึกษาต้องกรอกรหัสนี้ให้ถูกต้องก่อนถึงจะเข้าดูวิชาได้ หากเว้นว่างไว้ทุกคนที่ login แล้วสามารถเข้าได้ทันที
+                  แต่ละกลุ่มใช้รหัสของตัวเอง แต่ทุกกลุ่มเข้ารายวิชาเดียวกัน ระบบจะบันทึกว่านักศึกษาอยู่กลุ่มไหนจากรหัสที่กรอก
+                  · หากเว้นว่างทุกช่อง ทุกคนที่ login แล้วเข้าได้ทันที · จำนวนช่องเปลี่ยนตาม "จำนวนกลุ่มสอน"
                 </p>
               </div>
 
