@@ -167,7 +167,7 @@ export interface TeachingHour {
 export interface StudentCourseVisit {
   visit_id: string;
   student_id: string;   // uuid of students.id
-  course_id: string;
+  course_id: string | null;   // null = a log-in record (not a course visit)
   visited_at?: string;
 }
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   LayoutDashboard, BookOpen, Users, Target, FileText, Zap,
   MessageSquare, ClipboardList, ChevronDown, ChevronRight,
@@ -13,6 +13,7 @@ import {
 } from '../types';
 import { DashboardPage } from './DashboardPage';
 import { PDPAPrivacyModal } from './PDPAPrivacyModal';
+import { StudentLoginLog } from './StudentLoginLog';
 import { TeachingPlanTab } from './TeachingPlanTab';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -25,7 +26,8 @@ type BoView =
   | { type: 'dashboard' }
   | { type: 'course'; courseId: string; section: CourseSection }
   | { type: 'pdpa' }
-  | { type: 'schedule' };
+  | { type: 'schedule' }
+  | { type: 'logins' };
 
 interface BackOfficeProps {
   courses: Course[];
@@ -36,6 +38,7 @@ interface BackOfficeProps {
   activities: ActiveLearning[];
   reflections: import('../types').TeachingReflection[];
   visits: StudentCourseVisit[];
+  loginLogs: StudentCourseVisit[];
   submissions: AssignmentSubmission[];
   students: StudentProfile[];
   siteProfile: SiteProfile;
@@ -893,27 +896,54 @@ const SemesterScheduleEditor: React.FC<{
     semester_id: 1, year: new Date().getFullYear(), week1_start: '', total_weeks: 16,
   });
   const [formError, setFormError] = useState('');
+  const [saveError, setSaveError] = useState('');
 
-  const handleAdd = () => {
-    if (!form.week1_start) { setFormError('กรุณาเลือกวันที่เริ่มต้นสัปดาห์ที่ 1'); return; }
-    const exists = list.some(s => s.semester_id === form.semester_id && s.year === form.year);
-    if (exists) { setFormError(`มีการตั้งค่าภาคเรียน ${form.semester_id}/${form.year} แล้ว กรุณาลบก่อนเพิ่มใหม่`); return; }
-    setFormError('');
-    setList(prev => [...prev, { ...form }]);
-  };
+  // Schedules arrive from the DB after this page may already be open — keep in sync
+  useEffect(() => { setList(schedules); }, [schedules]);
 
-  const handleDelete = (idx: number) => setList(prev => prev.filter((_, i) => i !== idx));
-
-  const handleSave = async () => {
+  // Every add / edit / delete is written to the database immediately
+  const persist = async (next: SemesterSchedule[]) => {
+    const prev = list;
+    setList(next);
     setSaving(true);
+    setSaveError('');
     try {
-      await onSave(list);
+      await onSave(next);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
+      return true;
+    } catch (err) {
+      setList(prev);
+      setSaveError(`บันทึกไม่สำเร็จ: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
     } finally {
       setSaving(false);
     }
   };
+
+  const handleAdd = async () => {
+    if (!form.week1_start) { setFormError('กรุณาเลือกวันที่เริ่มต้นสัปดาห์ที่ 1'); return; }
+    setFormError('');
+    // Same semester/year already set → replace it (edit) instead of refusing
+    const next = [
+      ...list.filter(s => !(Number(s.semester_id) === form.semester_id && Number(s.year) === form.year)),
+      { ...form },
+    ];
+    if (await persist(next)) setForm(f => ({ ...f, week1_start: '' }));
+  };
+
+  const handleEdit = (s: SemesterSchedule) => {
+    setForm({ semester_id: Number(s.semester_id), year: Number(s.year), week1_start: s.week1_start, total_weeks: s.total_weeks });
+    setFormError('');
+  };
+
+  const handleDelete = (idx: number) => {
+    const s = list[idx];
+    if (!window.confirm(`ลบการตั้งค่าภาคเรียน ${s.semester_id}/${s.year} ?`)) return;
+    persist(list.filter((_, i) => i !== idx));
+  };
+
+  const handleSave = () => persist(list);
 
   const currentYear = new Date().getFullYear();
 
@@ -997,11 +1027,15 @@ const SemesterScheduleEditor: React.FC<{
         {formError && <p className="text-[11px] text-red-600 font-medium mb-3">{formError}</p>}
         <button
           onClick={handleAdd}
-          className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition active:scale-[0.98]"
+          disabled={saving}
+          className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition active:scale-[0.98] disabled:opacity-60"
         >
           <Plus size={13} />
-          เพิ่มภาคการศึกษา
+          {list.some(s => Number(s.semester_id) === form.semester_id && Number(s.year) === form.year)
+            ? `บันทึกการแก้ไขภาค ${form.semester_id}/${form.year}`
+            : 'เพิ่มและบันทึกภาคการศึกษา'}
         </button>
+        {saveError && <p className="text-[11px] text-red-600 font-medium mt-3">{saveError}</p>}
       </div>
 
       {/* Schedule list */}
@@ -1032,6 +1066,13 @@ const SemesterScheduleEditor: React.FC<{
                     </div>
                   </div>
                   <button
+                    onClick={() => handleEdit(s)}
+                    className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
+                    title="แก้ไข"
+                  >
+                    <Edit3 size={13} />
+                  </button>
+                  <button
                     onClick={() => handleDelete(origIdx)}
                     className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition"
                     title="ลบ"
@@ -1061,7 +1102,7 @@ const SemesterScheduleEditor: React.FC<{
 
 export const BackOffice: React.FC<BackOfficeProps> = ({
   courses, materials, assignments, questions, replies, activities, reflections,
-  visits, submissions, students, siteProfile,
+  visits, loginLogs, submissions, students, siteProfile,
   onNavigateCourses, onNavigateToCourse, onEditCourse, onAddCourse, onSavePdpa,
   semesterSchedules, onSaveSchedules,
 }) => {
@@ -1116,6 +1157,9 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
     }
     if (view.type === 'schedule') {
       return <SemesterScheduleEditor schedules={semesterSchedules} onSave={onSaveSchedules} />;
+    }
+    if (view.type === 'logins') {
+      return <StudentLoginLog students={students} loginLogs={loginLogs} />;
     }
     if (!currentCourse) return null;
     const { courseId, section } = view;
@@ -1291,6 +1335,19 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
           >
             <Calendar size={14} />
             ตารางการสอน
+          </button>
+
+          {/* Student log-in history */}
+          <button
+            onClick={() => { setView({ type: 'logins' }); setExpandedId(null); }}
+            className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
+              view.type === 'logins'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+            }`}
+          >
+            <Clock size={14} />
+            การเข้าใช้งานของนักศึกษา
           </button>
 
           {/* Section divider */}

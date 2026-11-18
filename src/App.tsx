@@ -121,6 +121,8 @@ export default function App() {
 
   // Student tracking state
   const [visits, setVisits] = useState<StudentCourseVisit[]>([]);
+  // Student log-in records: rows in student_course_visits with course_id = NULL
+  const [loginLogs, setLoginLogs] = useState<StudentCourseVisit[]>([]);
   const [submissions, setSubmissions] = useState<AssignmentSubmission[]>([]);
   const [allStudents, setAllStudents] = useState<StudentProfile[]>([]);
 
@@ -257,7 +259,9 @@ export default function App() {
       }
     }
     if (!visitsRes.error && visitsRes.data) {
-      setVisits(visitsRes.data as StudentCourseVisit[]);
+      const rows = visitsRes.data as StudentCourseVisit[];
+      setVisits(rows.filter(v => v.course_id));
+      setLoginLogs(rows.filter(v => !v.course_id));
     }
     if (!submissionsRes.error && submissionsRes.data) {
       setSubmissions(submissionsRes.data as AssignmentSubmission[]);
@@ -332,10 +336,32 @@ export default function App() {
   // Student login → jump to the latest semester (handled in the courses effect below)
   const [latestTermRequest, setLatestTermRequest] = useState(0);
   const studentLatestTermAppliedRef = useRef(false);
+  const loginRecordedRef = useRef(false);
 
   // Supabase Auth listener for student sessions
   useEffect(() => {
     let mounted = true;
+
+    // Log when a student enters the system (once per browser tab session)
+    const recordStudentLogin = (studentUuid: string) => {
+      if (loginRecordedRef.current) return;
+      loginRecordedRef.current = true;
+      const key = `login-logged-${studentUuid}`;
+      try {
+        if (sessionStorage.getItem(key)) return; // already logged in this tab (e.g. page refresh)
+        sessionStorage.setItem(key, '1');
+      } catch { /* storage unavailable — fall back to once per page load */ }
+      const log: StudentCourseVisit = {
+        visit_id: `login-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        student_id: studentUuid,
+        course_id: null,
+        visited_at: new Date().toISOString(),
+      };
+      supabase.from('student_course_visits').insert(log).then(({ error }) => {
+        if (error) console.error('[DB] login log insert error:', error.message);
+      });
+      setLoginLogs(prev => [log, ...prev]);
+    };
 
     // Build/fetch student profile and set role — wrapped in try/catch so
     // setRole('student') is ALWAYS called even if DB operations fail.
@@ -378,12 +404,14 @@ export default function App() {
       if (!mounted) return;
       setStudentProfile(profile);
       setRole('student');
+      recordStudentLogin(user.id);
 
       // Reload this student's visits so enrollment-code gate works correctly across sessions
       supabase
         .from('student_course_visits')
         .select('*')
         .eq('student_id', user.id)
+        .not('course_id', 'is', null)
         .order('visited_at', { ascending: false })
         .then(({ data }) => {
           if (data && mounted) {
@@ -1357,6 +1385,7 @@ export default function App() {
           activities={activities}
           reflections={reflections}
           visits={visits}
+          loginLogs={loginLogs}
           submissions={submissions}
           students={allStudents}
           siteProfile={siteProfile}
