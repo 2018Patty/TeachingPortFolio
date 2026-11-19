@@ -79,3 +79,10 @@ export const studentGroupInCourse = (
 /** Same visit id with the group part replaced (or removed when group is null). */
 export const withGroupInVisitId = (visitId: string, group: number | null): string =>
   visitId.replace(/^v-(g\d+-)?/, group ? `v-g${group}-` : 'v-');
+
+/** Visit id for a student the teacher added to a course by hand (not a real page view). */
+export const makeAddedVisitId = (group?: number | null): string =>
+  `${makeVisitId(group)}-added`;
+
+export const isAddedByTeacher = (visitId?: string | null): boolean =>
+  (visitId || '').endsWith('-added');

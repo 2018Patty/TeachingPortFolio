@@ -55,7 +55,7 @@ import { DashboardPage } from './components/DashboardPage';
 import { StudentAuthModal } from './components/StudentAuthModal';
 import {
   courseHasCode, matchGroupCode, makeVisitId, groupCount, generateEnrollCode,
-  parseGroupCodes, joinGroupCodes, codesIdentifyGroup, withGroupInVisitId,
+  parseGroupCodes, joinGroupCodes, codesIdentifyGroup, withGroupInVisitId, makeAddedVisitId,
 } from './utils/enrollGroups';
 import { StudentProfilePage } from './components/StudentProfilePage';
 import { BackOffice } from './components/BackOffice';
@@ -307,6 +307,77 @@ export default function App() {
     }
   };
 
+  // ── Admin: add / edit / remove students ────────────────────────────────────
+  type StudentFields = Pick<StudentProfile, 'student_id' | 'first_name' | 'last_name' | 'email'>;
+
+  // Add a student to a course. Either an existing account (existingId) or a new
+  // record typed in by the teacher. A new record has no Google account yet; when
+  // the student later logs in with the same email it is linked to their account.
+  const handleAddStudentToCourse = async (
+    courseId: string,
+    input: { existingId: string } | { profile: StudentFields },
+    group: number | null,
+  ) => {
+    let studentId: string;
+    if ('existingId' in input) {
+      studentId = input.existingId;
+    } else {
+      const profile: StudentProfile = {
+        id: crypto.randomUUID(),
+        student_id: input.profile.student_id.trim(),
+        first_name: input.profile.first_name.trim(),
+        last_name: input.profile.last_name.trim(),
+        email: input.profile.email.trim().toLowerCase(),
+        avatar_url: '',
+      };
+      const { data, error } = await supabase.from('students').insert(profile).select().single();
+      if (error) throw new Error(error.message);
+      setAllStudents(prev => [...prev, (data as StudentProfile) || profile]);
+      studentId = profile.id;
+    }
+    const visit: StudentCourseVisit = {
+      visit_id: makeAddedVisitId(group),
+      student_id: studentId,
+      course_id: courseId,
+      visited_at: new Date().toISOString(),
+    };
+    const { error } = await supabase.from('student_course_visits').insert(visit);
+    if (error) throw new Error(error.message);
+    setVisits(prev => [visit, ...prev]);
+  };
+
+  const handleUpdateStudent = async (id: string, fields: StudentFields) => {
+    const clean: StudentFields = {
+      student_id: fields.student_id.trim(),
+      first_name: fields.first_name.trim(),
+      last_name: fields.last_name.trim(),
+      email: fields.email.trim().toLowerCase(),
+    };
+    const { error } = await supabase.from('students').update(clean).eq('id', id);
+    if (error) throw new Error(error.message);
+    setAllStudents(prev => prev.map(s => (s.id === id ? { ...s, ...clean } : s)));
+    if (studentProfile?.id === id) setStudentProfile(prev => (prev ? { ...prev, ...clean } : prev));
+  };
+
+  // Remove a student from one course (their account and submissions stay).
+  const handleRemoveStudentFromCourse = async (studentId: string, courseId: string) => {
+    const { error } = await supabase.from('student_course_visits').delete()
+      .eq('student_id', studentId).eq('course_id', courseId);
+    if (error) throw new Error(error.message);
+    setVisits(prev => prev.filter(v => !(v.student_id === studentId && v.course_id === courseId)));
+  };
+
+  // Delete the student record and all its visit / login rows.
+  const handleDeleteStudentAccount = async (studentId: string) => {
+    const v = await supabase.from('student_course_visits').delete().eq('student_id', studentId);
+    if (v.error) throw new Error(v.error.message);
+    const s = await supabase.from('students').delete().eq('id', studentId);
+    if (s.error) throw new Error(s.error.message);
+    setVisits(prev => prev.filter(x => x.student_id !== studentId));
+    setLoginLogs(prev => prev.filter(x => x.student_id !== studentId));
+    setAllStudents(prev => prev.filter(x => x.id !== studentId));
+  };
+
   const handleSaveSchedules = async (schedules: SemesterSchedule[]) => {
     await handleSaveProfile({ semester_schedules: JSON.stringify(schedules) });
     setSemesterSchedules(schedules);
@@ -399,8 +470,34 @@ export default function App() {
           .eq('id', user.id)
           .maybeSingle();
 
+        // A record the teacher added by hand (same email, no account yet)?
+        // Link it to this account so the student keeps their course and group.
+        let preAdded: StudentProfile | null = null;
+        if (!data && user.email) {
+          const { data: byEmail } = await supabase
+            .from('students')
+            .select('*')
+            .eq('email', user.email.toLowerCase())
+            .neq('id', user.id)
+            .limit(1)
+            .maybeSingle();
+          if (byEmail) {
+            const oldId = (byEmail as StudentProfile).id;
+            const { error: linkErr } = await supabase.from('students').update({
+              id: user.id,
+              avatar_url: (byEmail as StudentProfile).avatar_url || user.user_metadata?.avatar_url || user.user_metadata?.picture || '',
+            }).eq('id', oldId);
+            if (!linkErr) {
+              await supabase.from('student_course_visits').update({ student_id: user.id }).eq('student_id', oldId);
+              preAdded = { ...(byEmail as StudentProfile), id: user.id };
+            }
+          }
+        }
+
         if (data) {
           profile = data as StudentProfile;
+        } else if (preAdded) {
+          profile = preAdded;
         } else {
           profile = {
             id: user.id,
@@ -1455,6 +1552,10 @@ export default function App() {
           semesterSchedules={semesterSchedules}
           onSaveSchedules={handleSaveSchedules}
           onChangeStudentGroup={handleChangeStudentGroup}
+          onAddStudentToCourse={handleAddStudentToCourse}
+          onUpdateStudent={handleUpdateStudent}
+          onRemoveStudentFromCourse={handleRemoveStudentFromCourse}
+          onDeleteStudentAccount={handleDeleteStudentAccount}
         />
       )}
 

@@ -4,7 +4,7 @@ import {
   MessageSquare, ClipboardList, ChevronDown, ChevronRight,
   Eye, Edit3, ExternalLink, Clock, CheckCircle, TrendingUp,
   GraduationCap, CalendarDays, ArrowRight, Plus, X, Link as LinkIcon,
-  FileDown, AlignLeft, Shield, Save, RefreshCw, Trash2, Calendar,
+  FileDown, AlignLeft, Shield, Save, RefreshCw, Trash2, Calendar, UserPlus, Pencil,
 } from 'lucide-react';
 import {
   Course, Material, Assignment, Question, Reply, ActiveLearning,
@@ -14,7 +14,7 @@ import {
 import { DashboardPage } from './DashboardPage';
 import { PDPAPrivacyModal } from './PDPAPrivacyModal';
 import { StudentLoginLog } from './StudentLoginLog';
-import { groupFromVisitId, groupCount, parseGroupCodes } from '../utils/enrollGroups';
+import { groupFromVisitId, groupCount, parseGroupCodes, isAddedByTeacher } from '../utils/enrollGroups';
 import { TeachingPlanTab } from './TeachingPlanTab';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -51,7 +51,13 @@ interface BackOfficeProps {
   semesterSchedules: SemesterSchedule[];
   onSaveSchedules: (schedules: SemesterSchedule[]) => Promise<void>;
   onChangeStudentGroup: (studentId: string, courseId: string, group: number | null) => Promise<void>;
+  onAddStudentToCourse: (courseId: string, input: { existingId: string } | { profile: StudentFields }, group: number | null) => Promise<void>;
+  onUpdateStudent: (id: string, fields: StudentFields) => Promise<void>;
+  onRemoveStudentFromCourse: (studentId: string, courseId: string) => Promise<void>;
+  onDeleteStudentAccount: (studentId: string) => Promise<void>;
 }
+
+type StudentFields = Pick<StudentProfile, 'student_id' | 'first_name' | 'last_name' | 'email'>;
 
 // ─── Sidebar section config ───────────────────────────────────────────────────
 
@@ -287,6 +293,232 @@ const StudentDetailModal: React.FC<{
   );
 };
 
+// ─── Student add / edit / delete modals ──────────────────────────────────────
+
+const inputCls = 'w-full text-xs border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500';
+
+const StudentFormModal: React.FC<{
+  mode: 'add' | 'edit';
+  nGroups: number;
+  student?: StudentProfile;
+  group: number | null;
+  candidates: StudentProfile[];   // accounts not yet in this course (add mode)
+  allStudents: StudentProfile[];  // for duplicate checks
+  onClose: () => void;
+  onSubmit: (input: { existingId: string } | { profile: StudentFields }, group: number | null) => Promise<void>;
+}> = ({ mode, nGroups, student, group: initialGroup, candidates, allStudents, onClose, onSubmit }) => {
+  const [source, setSource] = useState<'existing' | 'new'>(mode === 'add' && candidates.length > 0 ? 'existing' : 'new');
+  const [existingId, setExistingId] = useState('');
+  const [search, setSearch] = useState('');
+  const [fields, setFields] = useState<StudentFields>({
+    student_id: student?.student_id || '',
+    first_name: student?.first_name || '',
+    last_name: student?.last_name || '',
+    email: student?.email || '',
+  });
+  const [group, setGroup] = useState<number | null>(initialGroup ?? (nGroups === 1 ? 1 : null));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const set = (k: keyof StudentFields) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setFields(f => ({ ...f, [k]: e.target.value }));
+
+  const q = search.trim().toLowerCase();
+  const filteredCandidates = candidates.filter(s => !q ||
+    [s.student_id, s.first_name, s.last_name, s.email].some(v => (v || '').toLowerCase().includes(q)));
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    let input: { existingId: string } | { profile: StudentFields };
+    if (mode === 'add' && source === 'existing') {
+      if (!existingId) { setError('กรุณาเลือกนักศึกษา'); return; }
+      input = { existingId };
+    } else {
+      if (!fields.student_id.trim()) { setError('กรุณากรอกรหัสนักศึกษา'); return; }
+      if (!fields.first_name.trim()) { setError('กรุณากรอกชื่อ'); return; }
+      const email = fields.email.trim().toLowerCase();
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setError('รูปแบบอีเมลไม่ถูกต้อง'); return; }
+      const others = allStudents.filter(s => s.id !== student?.id);
+      const dupId = others.find(s => s.student_id && s.student_id.trim() === fields.student_id.trim());
+      if (dupId) { setError(`รหัสนักศึกษา ${fields.student_id.trim()} มีอยู่แล้ว (${dupId.first_name} ${dupId.last_name}) — เลือกจาก "บัญชีที่สมัครแล้ว" แทน`); return; }
+      const dupEmail = email && others.find(s => (s.email || '').toLowerCase() === email);
+      if (dupEmail) { setError(`อีเมลนี้มีบัญชีอยู่แล้ว (${dupEmail.first_name} ${dupEmail.last_name})`); return; }
+      input = { profile: fields };
+    }
+    setSaving(true);
+    try {
+      await onSubmit(input, group);
+    } catch (err) {
+      setError(`บันทึกไม่สำเร็จ: ${err instanceof Error ? err.message : String(err)}`);
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 text-left"
+      onClick={e => { if (e.target === e.currentTarget && !saving) onClose(); }}
+    >
+      <form onSubmit={submit} className="bg-white w-full max-w-md rounded-3xl border border-slate-200 shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+        <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between shrink-0">
+          <div className="font-extrabold text-sm flex items-center gap-2">
+            {mode === 'add' ? <><UserPlus size={15} /> เพิ่มนักศึกษาเข้าวิชา</> : <><Pencil size={14} /> แก้ไขข้อมูลนักศึกษา</>}
+          </div>
+          <button type="button" onClick={onClose} disabled={saving} className="p-2 rounded-xl hover:bg-white/10 text-white/70 hover:text-white transition">
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-4 overflow-y-auto">
+          {mode === 'add' && (
+            <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl">
+              {([['existing', `บัญชีที่สมัครแล้ว (${candidates.length})`], ['new', 'เพิ่มรายชื่อใหม่']] as const).map(([k, label]) => (
+                <button
+                  key={k} type="button" onClick={() => { setSource(k); setError(''); }}
+                  className={`py-1.5 rounded-lg text-[11px] font-bold transition ${source === k ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {mode === 'add' && source === 'existing' ? (
+            <div className="space-y-2">
+              {candidates.length === 0 ? (
+                <p className="text-xs text-slate-400 text-center py-6">นักศึกษาทุกคนที่สมัครแล้วอยู่ในวิชานี้แล้ว</p>
+              ) : (
+                <>
+                  <input value={search} onChange={e => setSearch(e.target.value)} placeholder="ค้นหารหัส ชื่อ หรืออีเมล" className={inputCls} />
+                  <div className="border border-slate-200 rounded-xl max-h-56 overflow-y-auto divide-y divide-slate-100">
+                    {filteredCandidates.length === 0 && <p className="text-xs text-slate-400 text-center py-4">ไม่พบนักศึกษา</p>}
+                    {filteredCandidates.map(s => (
+                      <label key={s.id} className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer text-xs ${existingId === s.id ? 'bg-indigo-50' : 'hover:bg-slate-50'}`}>
+                        <input type="radio" name="existing" checked={existingId === s.id} onChange={() => setExistingId(s.id)} className="accent-indigo-600" />
+                        <div className="min-w-0">
+                          <div className="font-semibold text-slate-800 truncate">{`${s.first_name} ${s.last_name}`.trim() || s.email}</div>
+                          <div className="text-[10px] text-slate-400 truncate"><span className="font-mono">{s.student_id || '—'}</span> · {s.email}</div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">รหัสนักศึกษา *</label>
+                <input value={fields.student_id} onChange={set('student_id')} className={`${inputCls} font-mono`} placeholder="เช่น 6840011022" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">ชื่อ *</label>
+                  <input value={fields.first_name} onChange={set('first_name')} className={inputCls} />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">นามสกุล</label>
+                  <input value={fields.last_name} onChange={set('last_name')} className={inputCls} />
+                </div>
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">อีเมล (Google)</label>
+                <input type="email" value={fields.email} onChange={set('email')} className={inputCls} placeholder="name@psu.ac.th" />
+                {mode === 'add' && (
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    เมื่อนักศึกษา login ด้วย Google ที่ใช้อีเมลนี้ ระบบจะผูกกับรายชื่อนี้ให้อัตโนมัติ (อยู่ในวิชาและกลุ่มเดิม)
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div>
+            <label className="block text-[11px] font-semibold text-slate-600 mb-1">กลุ่มเรียน</label>
+            <select
+              value={group ?? ''}
+              onChange={e => setGroup(e.target.value === '' ? null : Number(e.target.value))}
+              className={inputCls}
+            >
+              <option value="">ไม่ระบุกลุ่ม</option>
+              {Array.from({ length: Math.max(nGroups, group ?? 0) }, (_, k) => k + 1).map(g => (
+                <option key={g} value={g}>กลุ่ม {g}</option>
+              ))}
+            </select>
+          </div>
+
+          {error && <div className="text-[11px] text-red-600 font-medium bg-red-50 border border-red-100 rounded-xl px-3 py-2">{error}</div>}
+        </div>
+
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2 shrink-0">
+          <button type="button" onClick={onClose} disabled={saving} className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 transition">
+            ยกเลิก
+          </button>
+          <button type="submit" disabled={saving} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold disabled:opacity-60 transition">
+            <Save size={13} /> {saving ? 'กำลังบันทึก...' : mode === 'add' ? 'เพิ่มนักศึกษา' : 'บันทึก'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+};
+
+const DeleteStudentModal: React.FC<{
+  name: string;
+  courseCode: string;
+  onClose: () => void;
+  onRemoveFromCourse: () => Promise<void>;
+  onDeleteAccount: () => Promise<void>;
+}> = ({ name, courseCode, onClose, onRemoveFromCourse, onDeleteAccount }) => {
+  const [busy, setBusy] = useState<null | 'course' | 'account'>(null);
+  const [error, setError] = useState('');
+  const run = async (kind: 'course' | 'account', fn: () => Promise<void>) => {
+    setBusy(kind);
+    setError('');
+    try { await fn(); } catch (err) {
+      setError(`ลบไม่สำเร็จ: ${err instanceof Error ? err.message : String(err)}`);
+      setBusy(null);
+    }
+  };
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 text-left"
+      onClick={e => { if (e.target === e.currentTarget && !busy) onClose(); }}
+    >
+      <div className="bg-white w-full max-w-md rounded-3xl border border-slate-200 shadow-2xl overflow-hidden">
+        <div className="px-6 pt-6 pb-4">
+          <div className="w-11 h-11 rounded-2xl bg-red-50 text-red-600 flex items-center justify-center mb-3"><Trash2 size={18} /></div>
+          <div className="font-extrabold text-sm text-slate-800">ลบ “{name}”</div>
+          <p className="text-xs text-slate-500 mt-1">เลือกว่าต้องการลบแบบไหน</p>
+        </div>
+        <div className="px-6 space-y-2">
+          <button
+            disabled={!!busy}
+            onClick={() => run('course', onRemoveFromCourse)}
+            className="w-full text-left border border-slate-200 hover:border-amber-300 hover:bg-amber-50 rounded-2xl px-4 py-3 transition disabled:opacity-60"
+          >
+            <div className="text-xs font-bold text-slate-800">{busy === 'course' ? 'กำลังลบ...' : `นำออกจากวิชา ${courseCode}`}</div>
+            <div className="text-[10px] text-slate-500 mt-0.5">ลบประวัติการเข้าชมวิชานี้ บัญชีและงานที่ส่งยังอยู่ ถ้าจะกลับเข้าวิชาต้องใช้รหัสเข้าเรียนอีกครั้ง</div>
+          </button>
+          <button
+            disabled={!!busy}
+            onClick={() => { if (window.confirm(`ยืนยันลบบัญชี "${name}" ออกจากระบบ?\nข้อมูลการเข้าชมและการเข้าสู่ระบบทั้งหมดจะถูกลบ`)) run('account', onDeleteAccount); }}
+            className="w-full text-left border border-slate-200 hover:border-red-300 hover:bg-red-50 rounded-2xl px-4 py-3 transition disabled:opacity-60"
+          >
+            <div className="text-xs font-bold text-red-600">{busy === 'account' ? 'กำลังลบ...' : 'ลบบัญชีนักศึกษาออกจากระบบ'}</div>
+            <div className="text-[10px] text-slate-500 mt-0.5">ลบข้อมูลนักศึกษาและประวัติการเข้าชม/เข้าสู่ระบบทุกวิชา (หาก login ด้วย Google อีกครั้ง ระบบจะสร้างบัญชีใหม่)</div>
+          </button>
+          {error && <div className="text-[11px] text-red-600 font-medium bg-red-50 border border-red-100 rounded-xl px-3 py-2">{error}</div>}
+        </div>
+        <div className="px-6 py-4 flex justify-end">
+          <button onClick={onClose} disabled={!!busy} className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 transition">ยกเลิก</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── Student List Section ─────────────────────────────────────────────────────
 
 const StudentsSection: React.FC<{
@@ -297,7 +529,14 @@ const StudentsSection: React.FC<{
   students: StudentProfile[];
   onSelectStudent: (sid: string) => void;
   onChangeGroup: (sid: string, group: number | null) => Promise<void>;
-}> = ({ course, visits, submissions, assignments, students, onSelectStudent, onChangeGroup }) => {
+  onAddStudent: (input: { existingId: string } | { profile: StudentFields }, group: number | null) => Promise<void>;
+  onUpdateStudent: (id: string, fields: StudentFields) => Promise<void>;
+  onRemoveFromCourse: (sid: string) => Promise<void>;
+  onDeleteAccount: (sid: string) => Promise<void>;
+}> = ({
+  course, visits, submissions, assignments, students, onSelectStudent, onChangeGroup,
+  onAddStudent, onUpdateStudent, onRemoveFromCourse, onDeleteAccount,
+}) => {
   const courseVisits = visits.filter(v => v.course_id === course.course_id);
   const courseSubmissions = submissions.filter(s => s.course_id === course.course_id);
 
@@ -305,17 +544,18 @@ const StudentsSection: React.FC<{
   const studentIds = Array.from(new Set(courseVisits.map(v => v.student_id)));
   const rows = studentIds.map(sid => {
     const student = students.find(s => s.id === sid);
-    const visitCount = courseVisits.filter(v => v.student_id === sid).length;
+    const realVisits = courseVisits.filter(v => v.student_id === sid && !isAddedByTeacher(v.visit_id));
+    const visitCount = realVisits.length;
+    const addedByTeacher = realVisits.length === 0;
     const studentSubmissions = courseSubmissions.filter(s => s.student_id === sid);
-    const lastVisit = courseVisits
-      .filter(v => v.student_id === sid)
+    const lastVisit = realVisits
       .sort((a, b) => (b.visited_at || '').localeCompare(a.visited_at || ''))
       .at(0);
     const group = courseVisits
       .filter(v => v.student_id === sid)
       .map(v => groupFromVisitId(v.visit_id))
       .find((g): g is number => g !== null) ?? null;
-    return { sid, student, visitCount, submissionCount: studentSubmissions.length, studentSubmissions, lastVisit, group };
+    return { sid, student, visitCount, submissionCount: studentSubmissions.length, studentSubmissions, lastVisit, group, addedByTeacher };
   }).sort((a, b) => (a.group ?? 999) - (b.group ?? 999));
 
   const [groupFilter, setGroupFilter] = useState<'all' | 'none' | number>('all');
@@ -343,18 +583,73 @@ const StudentsSection: React.FC<{
     groupFilter === 'all' ? true : groupFilter === 'none' ? r.group === null : r.group === groupFilter
   );
 
+  // Add / edit / delete modals
+  const [formMode, setFormMode] = useState<null | { type: 'add' } | { type: 'edit'; sid: string }>(null);
+  const [deleteSid, setDeleteSid] = useState<string | null>(null);
+  const notInCourse = students.filter(s => !studentIds.includes(s.id));
+  const editingRow = formMode?.type === 'edit' ? rows.find(r => r.sid === formMode.sid) : undefined;
+  const deletingRow = deleteSid ? rows.find(r => r.sid === deleteSid) : undefined;
+
+  const modals = (
+    <>
+      {formMode && (
+        <StudentFormModal
+          mode={formMode.type}
+          nGroups={nGroups}
+          student={editingRow?.student}
+          group={editingRow?.group ?? null}
+          candidates={notInCourse}
+          allStudents={students}
+          onClose={() => setFormMode(null)}
+          onSubmit={async (input, group) => {
+            if (formMode.type === 'add') {
+              await onAddStudent(input, group);
+            } else {
+              if ('profile' in input) await onUpdateStudent(formMode.sid, input.profile);
+              if (group !== (editingRow?.group ?? null)) await onChangeGroup(formMode.sid, group);
+            }
+            setFormMode(null);
+          }}
+        />
+      )}
+      {deleteSid && (
+        <DeleteStudentModal
+          name={deletingRow?.student
+            ? `${deletingRow.student.first_name} ${deletingRow.student.last_name}`.trim() || deletingRow.student.email
+            : deleteSid.slice(0, 8)}
+          courseCode={course.course_code}
+          onClose={() => setDeleteSid(null)}
+          onRemoveFromCourse={async () => { await onRemoveFromCourse(deleteSid); setDeleteSid(null); }}
+          onDeleteAccount={async () => { await onDeleteAccount(deleteSid); setDeleteSid(null); }}
+        />
+      )}
+    </>
+  );
+
+  const addButton = (
+    <button
+      onClick={() => setFormMode({ type: 'add' })}
+      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold shadow-sm transition"
+    >
+      <UserPlus size={13} /> เพิ่มนักศึกษา
+    </button>
+  );
+
   if (rows.length === 0) {
     return (
       <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center shadow-sm">
         <Users size={36} className="mx-auto text-slate-200 mb-3" />
-        <p className="text-sm font-semibold text-slate-400">ยังไม่มีนักศึกษาเข้าชมวิชานี้</p>
-        <p className="text-xs text-slate-300 mt-1">ระบบจะบันทึกเมื่อนักศึกษา (login) เปิดวิชานี้</p>
+        <p className="text-sm font-semibold text-slate-400">ยังไม่มีนักศึกษาในวิชานี้</p>
+        <p className="text-xs text-slate-300 mt-1 mb-4">ระบบจะบันทึกเมื่อนักศึกษา (login) เปิดวิชานี้ หรืออาจารย์เพิ่มนักศึกษาเองได้</p>
+        {addButton}
+        {modals}
       </div>
     );
   }
 
   return (
     <div className="space-y-4">
+        {modals}
         {/* Summary */}
         <div className="grid grid-cols-3 gap-4">
           <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm text-center">
@@ -362,7 +657,7 @@ const StudentsSection: React.FC<{
             <div className="text-xs text-slate-500 mt-0.5">นักศึกษาทั้งหมด</div>
           </div>
           <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm text-center">
-            <div className="text-2xl font-extrabold text-emerald-600">{courseVisits.length}</div>
+            <div className="text-2xl font-extrabold text-emerald-600">{courseVisits.filter(v => !isAddedByTeacher(v.visit_id)).length}</div>
             <div className="text-xs text-slate-500 mt-0.5">ครั้งการเข้าชมรวม</div>
           </div>
           <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm text-center">
@@ -376,7 +671,8 @@ const StudentsSection: React.FC<{
           <div className="px-5 py-3.5 border-b border-slate-100 flex items-center gap-2">
             <Users size={14} className="text-slate-500" />
             <span className="text-xs font-bold text-slate-700">รายชื่อนักศึกษา</span>
-            <span className="text-[10px] text-slate-400 ml-1">— คลิกชื่อเพื่อดูรายละเอียด · เปลี่ยนกลุ่มได้ที่คอลัมน์ "กลุ่ม"</span>
+            <span className="text-[10px] text-slate-400 ml-1 hidden md:inline">— คลิกชื่อเพื่อดูรายละเอียด · เปลี่ยนกลุ่มได้ที่คอลัมน์ "กลุ่ม"</span>
+            <span className="ml-auto">{addButton}</span>
           </div>
           {groupError && <div className="px-5 py-2 text-[11px] text-red-600 font-medium bg-red-50 border-b border-red-100">{groupError}</div>}
           {/* Group filter + codes */}
@@ -415,13 +711,14 @@ const StudentsSection: React.FC<{
                   <th className="text-center px-4 py-2.5 font-semibold text-slate-500">ส่งงาน (ครั้ง)</th>
                   <th className="text-left px-4 py-2.5 font-semibold text-slate-500">งานที่ส่ง</th>
                   <th className="text-left px-4 py-2.5 font-semibold text-slate-500">เข้าชมล่าสุด</th>
+                  <th className="text-center px-4 py-2.5 font-semibold text-slate-500">จัดการ</th>
                 </tr>
               </thead>
               <tbody>
                 {visibleRows.length === 0 && (
-                  <tr><td colSpan={8} className="px-4 py-6 text-center text-slate-400 text-xs">ยังไม่มีนักศึกษาในกลุ่มนี้</td></tr>
+                  <tr><td colSpan={9} className="px-4 py-6 text-center text-slate-400 text-xs">ยังไม่มีนักศึกษาในกลุ่มนี้</td></tr>
                 )}
-                {visibleRows.map(({ sid, student, visitCount, submissionCount, studentSubmissions, lastVisit, group }, i) => {
+                {visibleRows.map(({ sid, student, visitCount, submissionCount, studentSubmissions, lastVisit, group, addedByTeacher }, i) => {
                   const cfg = avatarCfg(sid);
                   const name = student
                     ? `${student.first_name} ${student.last_name}`.trim() || student.email
@@ -446,6 +743,9 @@ const StudentsSection: React.FC<{
                           <div>
                             <div className="font-semibold text-indigo-700 group-hover:underline underline-offset-2">{name}</div>
                             <div className="text-[10px] text-slate-400">{email}</div>
+                            {addedByTeacher && (
+                              <div className="text-[9px] font-semibold text-amber-600 mt-0.5">อาจารย์เพิ่มเอง · ยังไม่เคยเข้าชม</div>
+                            )}
                           </div>
                         </div>
                       </td>
@@ -503,6 +803,22 @@ const StudentsSection: React.FC<{
                               dateStyle: 'short', timeStyle: 'short',
                             })
                           : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-center whitespace-nowrap" onClick={e => e.stopPropagation()}>
+                        <button
+                          onClick={() => setFormMode({ type: 'edit', sid })}
+                          title="แก้ไขข้อมูลนักศึกษา"
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition"
+                        >
+                          <Pencil size={13} />
+                        </button>
+                        <button
+                          onClick={() => setDeleteSid(sid)}
+                          title="ลบนักศึกษา"
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition"
+                        >
+                          <Trash2 size={13} />
+                        </button>
                       </td>
                     </tr>
                   );
@@ -1186,6 +1502,7 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
   visits, loginLogs, submissions, students, siteProfile,
   onNavigateCourses, onNavigateToCourse, onEditCourse, onAddCourse, onSavePdpa,
   semesterSchedules, onSaveSchedules, onChangeStudentGroup,
+  onAddStudentToCourse, onUpdateStudent, onRemoveStudentFromCourse, onDeleteStudentAccount,
 }) => {
   const [view, setView] = useState<BoView>({ type: 'dashboard' });
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -1272,6 +1589,10 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
         assignments={cAssignments} students={students}
         onSelectStudent={(sid) => setDetailStudent({ sid, courseId })}
         onChangeGroup={(sid, g) => onChangeStudentGroup(sid, courseId, g)}
+        onAddStudent={(input, g) => onAddStudentToCourse(courseId, input, g)}
+        onUpdateStudent={onUpdateStudent}
+        onRemoveFromCourse={(sid) => onRemoveStudentFromCourse(sid, courseId)}
+        onDeleteAccount={onDeleteStudentAccount}
       />
     );
 
