@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { AssignmentAttachments, ActivityVideos } from './AssignmentAttachments';
+import { GradeFeedback } from './GradingSection';
+import { attemptsOf } from '../utils/grading';
 import { splitActivityFileUrl } from '../utils/assignmentLinks';
 import {
   User, BookOpen, FileText, Video, ExternalLink, ChevronRight,
@@ -350,7 +352,7 @@ export const StudentProfilePage: React.FC<Props> = ({
                 </div>
                 <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm text-center">
                   <p className="text-2xl font-black text-emerald-600">
-                    {submissions.filter(s => s.student_id === studentProfile.id).length}
+                    {new Set(submissions.filter(s => s.student_id === studentProfile.id).map(s => s.assignment_id)).size}
                   </p>
                   <p className="text-[10px] text-slate-500 font-bold uppercase mt-1">งานที่ส่งแล้ว</p>
                 </div>
@@ -386,9 +388,9 @@ export const StudentProfilePage: React.FC<Props> = ({
                   {myCourses.map(course => {
                     const cMaterials   = materials.filter(m => m.course_id === course.course_id).length;
                     const cAssignments = assignments.filter(a => a.course_id === course.course_id).length;
-                    const submitted    = submissions.filter(
+                    const submitted    = new Set(submissions.filter(
                       s => s.student_id === studentProfile.id && s.course_id === course.course_id
-                    ).length;
+                    ).map(s => s.assignment_id)).size;
                     return (
                       <button
                         key={course.course_id}
@@ -629,9 +631,8 @@ export const StudentProfilePage: React.FC<Props> = ({
                     <div className="space-y-3">
                       {courseAssignments.map(assign => {
                         const submitted = mySubmittedIds.has(assign.assignment_id);
-                        const mySub = submissions.find(
-                          s => s.student_id === studentProfile.id && s.assignment_id === assign.assignment_id
-                        );
+                        const myAttempts = attemptsOf(submissions, studentProfile.id, assign.assignment_id);
+                        const mySub = myAttempts[0];
                         return (
                           <div
                             key={assign.assignment_id}
@@ -688,6 +689,21 @@ export const StudentProfilePage: React.FC<Props> = ({
                                 </span>
                               )}
                             </div>
+                            {mySub && (
+                              <div className="pl-11 space-y-1.5">
+                                {myAttempts.length > 1 && (
+                                  <p className="text-[10px] font-bold text-indigo-700">ส่งทั้งหมด {myAttempts.length} ครั้ง (แสดงครั้งล่าสุด)</p>
+                                )}
+                                {mySub.link_url && (
+                                  <a href={mySub.link_url} target="_blank" rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 rounded-lg px-2.5 py-1.5 transition max-w-full">
+                                    <ExternalLink size={11} className="shrink-0" />
+                                    <span className="truncate max-w-[280px]">{mySub.link_url}</span>
+                                  </a>
+                                )}
+                                <GradeFeedback note={mySub.note} compact />
+                              </div>
+                            )}
                           </div>
                         );
                       })}

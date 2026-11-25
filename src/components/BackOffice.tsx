@@ -4,7 +4,7 @@ import {
   MessageSquare, ClipboardList, ChevronDown, ChevronRight,
   Eye, Edit3, ExternalLink, Clock, CheckCircle, TrendingUp,
   GraduationCap, CalendarDays, ArrowRight, Plus, X, Link as LinkIcon,
-  FileDown, AlignLeft, Shield, Save, RefreshCw, Trash2, Calendar, UserPlus, Pencil,
+  FileDown, AlignLeft, ClipboardCheck, Shield, Save, RefreshCw, Trash2, Calendar, UserPlus, Pencil,
 } from 'lucide-react';
 import {
   Course, Material, Assignment, Question, Reply, ActiveLearning,
@@ -16,12 +16,15 @@ import { PDPAPrivacyModal } from './PDPAPrivacyModal';
 import { StudentLoginLog } from './StudentLoginLog';
 import { groupFromVisitId, groupCount, parseGroupCodes, isAddedByTeacher } from '../utils/enrollGroups';
 import { TeachingPlanTab } from './TeachingPlanTab';
+import { GradingSection, SubmissionContent, GradeFeedback, type SaveGrade } from './GradingSection';
+import { SubmissionLog } from './MySubmission';
+import { latestAttempts, attemptsOf } from '../utils/grading';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type CourseSection =
   | 'overview' | 'students' | 'objectives'
-  | 'materials' | 'active_learning' | 'qa' | 'assignments' | 'plan';
+  | 'materials' | 'active_learning' | 'qa' | 'assignments' | 'grading' | 'plan';
 
 type BoView =
   | { type: 'dashboard' }
@@ -55,6 +58,7 @@ interface BackOfficeProps {
   onUpdateStudent: (id: string, fields: StudentFields) => Promise<void>;
   onRemoveStudentFromCourse: (studentId: string, courseId: string) => Promise<void>;
   onDeleteStudentAccount: (studentId: string) => Promise<void>;
+  onSaveGrade: SaveGrade;
 }
 
 type StudentFields = Pick<StudentProfile, 'student_id' | 'first_name' | 'last_name' | 'email'>;
@@ -69,6 +73,7 @@ const SECTIONS: { section: CourseSection; label: string; icon: React.ReactNode; 
   { section: 'active_learning',label: 'Active Learning',   icon: <Zap size={12} />,          tab: 'active_learning' },
   { section: 'qa',             label: 'ถามตอบ',            icon: <MessageSquare size={12} />, tab: 'qa' },
   { section: 'assignments',    label: 'งานมอบหมาย',       icon: <ClipboardList size={12} />, tab: 'assignments' },
+  { section: 'grading',        label: 'ตรวจงาน',          icon: <ClipboardCheck size={12} /> },
   { section: 'plan',           label: 'แผนการสอน',        icon: <Calendar size={12} /> },
 ];
 
@@ -106,6 +111,7 @@ const StudentDetailModal: React.FC<{
     ? `${student.first_name} ${student.last_name}`.trim() || student.email
     : studentId.slice(0, 8) + '...';
   const visitCount = visits.filter(v => v.student_id === studentId).length;
+  const submittedCount = assignments.filter(a => submissions.some(s => s.assignment_id === a.assignment_id)).length;
   const studentGroup = visits.map(v => groupFromVisitId(v.visit_id)).find((g): g is number => g !== null) ?? null;
   const lastVisit = visits
     .filter(v => v.student_id === studentId)
@@ -153,11 +159,11 @@ const StudentDetailModal: React.FC<{
             <div className="text-[10px] text-slate-500 mt-0.5">ครั้งที่เข้าชม</div>
           </div>
           <div className="text-center">
-            <div className="text-xl font-extrabold text-emerald-600">{submissions.length}</div>
+            <div className="text-xl font-extrabold text-emerald-600">{submittedCount}</div>
             <div className="text-[10px] text-slate-500 mt-0.5">งานที่ส่งแล้ว</div>
           </div>
           <div className="text-center">
-            <div className="text-xl font-extrabold text-amber-600">{assignments.length - submissions.length < 0 ? 0 : assignments.length - submissions.length}</div>
+            <div className="text-xl font-extrabold text-amber-600">{assignments.length - submittedCount}</div>
             <div className="text-[10px] text-slate-500 mt-0.5">งานที่ยังไม่ส่ง</div>
           </div>
         </div>
@@ -172,7 +178,8 @@ const StudentDetailModal: React.FC<{
             <p className="text-xs text-slate-400 italic text-center py-6">ยังไม่มีงานมอบหมายในวิชานี้</p>
           )}
           {assignments.map(assign => {
-            const sub = submissions.find(s => s.assignment_id === assign.assignment_id);
+            const attempts = attemptsOf(submissions, studentId, assign.assignment_id);
+            const sub = attempts[0];
             const isExpanded = expandedId === assign.assignment_id;
 
             return (
@@ -216,56 +223,17 @@ const StudentDetailModal: React.FC<{
 
                 {/* Submission content — expanded only */}
                 {sub && isExpanded && (
-                  <div className="px-4 pb-4 space-y-2 border-t border-emerald-100">
-                    {!sub.answer_text && !sub.file_url && !sub.link_url && !sub.note && (
-                      <p className="text-[11px] text-slate-400 italic pt-3">ไม่มีเนื้อหาการส่งงาน (อาจส่งผ่านช่องทางอื่น)</p>
+                  <div className="px-4 pb-4 pt-3 space-y-2 border-t border-emerald-100">
+                    {attempts.length > 1 && (
+                      <p className="text-[10px] font-bold text-indigo-700">งานล่าสุด (ส่งครั้งที่ {attempts.length})</p>
                     )}
-                    {sub.answer_text && (
-                      <div className="bg-white border border-slate-200 rounded-xl px-3 py-2.5 space-y-1 mt-3">
-                        <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500">
-                          <AlignLeft size={10} />
-                          คำตอบ
-                        </div>
-                        <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">{sub.answer_text}</p>
+                    <SubmissionContent sub={sub} />
+                    <GradeFeedback note={sub.note} />
+                    {attempts.length > 1 && (
+                      <div className="pt-1 space-y-2">
+                        <p className="text-[10px] font-bold text-slate-500">ประวัติการส่งครั้งก่อน</p>
+                        <SubmissionLog attempts={attempts} dueDate={assign.due_date} />
                       </div>
-                    )}
-                    {sub.file_url && (() => {
-                      const urls: string[] = (() => {
-                        try {
-                          const p = JSON.parse(sub.file_url!);
-                          return Array.isArray(p) ? p.filter(Boolean) : [sub.file_url!];
-                        } catch { return [sub.file_url!]; }
-                      })();
-                      return (
-                        <div className="flex flex-wrap gap-2">
-                          {urls.map((url, fi) => (
-                            <a
-                              key={fi}
-                              href={url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center gap-2 text-xs font-semibold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-100 rounded-xl px-3 py-2 transition w-fit"
-                            >
-                              <FileDown size={12} />
-                              ไฟล์ {fi + 1}
-                            </a>
-                          ))}
-                        </div>
-                      );
-                    })()}
-                    {sub.link_url && (
-                      <a
-                        href={sub.link_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-2 text-xs font-semibold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 rounded-xl px-3 py-2 transition w-fit"
-                      >
-                        <LinkIcon size={12} />
-                        <span className="truncate max-w-[260px]">{sub.link_url}</span>
-                      </a>
-                    )}
-                    {sub.note && (
-                      <p className="text-[11px] text-slate-500 italic">หมายเหตุ: {sub.note}</p>
                     )}
                   </div>
                 )}
@@ -539,6 +507,7 @@ const StudentsSection: React.FC<{
 }) => {
   const courseVisits = visits.filter(v => v.course_id === course.course_id);
   const courseSubmissions = submissions.filter(s => s.course_id === course.course_id);
+  const uniqueCourseSubmissions = latestAttempts(courseSubmissions);
 
   // Build per-student data
   const studentIds = Array.from(new Set(courseVisits.map(v => v.student_id)));
@@ -547,7 +516,7 @@ const StudentsSection: React.FC<{
     const realVisits = courseVisits.filter(v => v.student_id === sid && !isAddedByTeacher(v.visit_id));
     const visitCount = realVisits.length;
     const addedByTeacher = realVisits.length === 0;
-    const studentSubmissions = courseSubmissions.filter(s => s.student_id === sid);
+    const studentSubmissions = latestAttempts(courseSubmissions.filter(s => s.student_id === sid));
     const lastVisit = realVisits
       .sort((a, b) => (b.visited_at || '').localeCompare(a.visited_at || ''))
       .at(0);
@@ -661,7 +630,7 @@ const StudentsSection: React.FC<{
             <div className="text-xs text-slate-500 mt-0.5">ครั้งการเข้าชมรวม</div>
           </div>
           <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm text-center">
-            <div className="text-2xl font-extrabold text-amber-600">{courseSubmissions.length}</div>
+            <div className="text-2xl font-extrabold text-amber-600">{uniqueCourseSubmissions.length}</div>
             <div className="text-xs text-slate-500 mt-0.5">งานที่ส่งแล้ว</div>
           </div>
         </div>
@@ -1502,7 +1471,7 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
   visits, loginLogs, submissions, students, siteProfile,
   onNavigateCourses, onNavigateToCourse, onEditCourse, onAddCourse, onSavePdpa,
   semesterSchedules, onSaveSchedules, onChangeStudentGroup,
-  onAddStudentToCourse, onUpdateStudent, onRemoveStudentFromCourse, onDeleteStudentAccount,
+  onAddStudentToCourse, onUpdateStudent, onRemoveStudentFromCourse, onDeleteStudentAccount, onSaveGrade,
 }) => {
   const [view, setView] = useState<BoView>({ type: 'dashboard' });
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -1663,6 +1632,18 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
       />
     );
 
+    if (section === 'grading') return (
+      <GradingSection
+        course={currentCourse}
+        assignments={cAssignments}
+        activities={cActivities}
+        submissions={submissions}
+        students={students}
+        visits={visits}
+        onSaveGrade={onSaveGrade}
+      />
+    );
+
     if (section === 'plan') return (
       <TeachingPlanTab
         course={currentCourse}
@@ -1679,7 +1660,14 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
   const modalStudent = detailStudent ? students.find(s => s.id === detailStudent.sid) : undefined;
   const modalVisits = detailStudent ? visits.filter(v => v.course_id === detailStudent.courseId && v.student_id === detailStudent.sid) : [];
   const modalSubmissions = detailStudent ? submissions.filter(s => s.course_id === detailStudent.courseId && s.student_id === detailStudent.sid) : [];
-  const modalAssignments = detailStudent ? assignments.filter(a => a.course_id === detailStudent.courseId) : [];
+  // Assignments plus Active Learning activities that take submissions.
+  const modalAssignments: Assignment[] = detailStudent ? [
+    ...assignments.filter(a => a.course_id === detailStudent.courseId),
+    ...activities.filter(a => a.course_id === detailStudent.courseId && a.is_assignment).map(a => ({
+      assignment_id: a.activity_id, course_id: a.course_id, title: `[Active Learning] ${a.title}`,
+      description: a.description, due_date: a.due_date || '', status: 'open' as const,
+    })),
+  ] : [];
 
   return (
     <>

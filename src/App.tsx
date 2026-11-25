@@ -63,6 +63,8 @@ import { StudentProfilePage } from './components/StudentProfilePage';
 import { AssignmentAttachments } from './components/AssignmentAttachments';
 import { parseAttachments, serializeAttachments, looksLikeVideo, splitActivityFileUrl, buildActivityFileUrl, isActivityAnchorId, type AttachmentLink } from './utils/assignmentLinks';
 import { ActivityVideos } from './components/AssignmentAttachments';
+import { MySubmission } from './components/MySubmission';
+import { buildGradeNote, attemptsOf, type SubmissionGrade } from './utils/grading';
 import { BackOffice } from './components/BackOffice';
 import { PDPAConsentBanner } from './components/PDPAConsentBanner';
 import { PDPAPrivacyModal } from './components/PDPAPrivacyModal';
@@ -145,6 +147,9 @@ export default function App() {
   const [submittingAssignment, setSubmittingAssignment] = useState<Assignment | null>(null);
   const [submitForm, setSubmitForm] = useState({ answer_text: '', link_url: '' });
   const [submitFiles, setSubmitFiles] = useState<File[]>([]);
+  // Editing a submission: files of the previous attempt to carry over, and that attempt.
+  const [submitKeptFiles, setSubmitKeptFiles] = useState<string[]>([]);
+  const [resubmitOf, setResubmitOf] = useState<AssignmentSubmission | null>(null);
   const [submitUploading, setSubmitUploading] = useState(false);
   const [submitUploadError, setSubmitUploadError] = useState('');
 
@@ -377,6 +382,15 @@ export default function App() {
   };
 
   // Delete the student record and all its visit / login rows.
+  // Score + feedback for a submission (stored as JSON in assignment_submissions.note).
+  const handleSaveGrade = async (submissionId: string, grade: SubmissionGrade | null) => {
+    const current = submissions.find(s => s.submission_id === submissionId);
+    const note = buildGradeNote(grade, current?.note);
+    const { error } = await supabase.from('assignment_submissions').update({ note }).eq('submission_id', submissionId);
+    if (error) throw new Error(error.message);
+    setSubmissions(prev => prev.map(s => s.submission_id === submissionId ? { ...s, note } : s));
+  };
+
   const handleDeleteStudentAccount = async (studentId: string) => {
     const v = await supabase.from('student_course_visits').delete().eq('student_id', studentId);
     if (v.error) throw new Error(v.error.message);
@@ -1179,11 +1193,24 @@ export default function App() {
     setShowCourseModal(true);
   };
 
+  /** Open the submit form; with `previous`, it is pre-filled to edit that attempt. */
+  const openSubmitModal = (assign: Assignment, previous?: AssignmentSubmission) => {
+    setSubmittingAssignment(assign);
+    setSubmitForm({ answer_text: previous?.answer_text || '', link_url: previous?.link_url || '' });
+    setSubmitKeptFiles(previous ? parseFileUrls(previous.file_url) : []);
+    setResubmitOf(previous ?? null);
+    setSubmitFiles([]);
+    setSubmitUploadError('');
+    setShowSubmitModal(true);
+  };
+
   const resetSubmitModal = () => {
     setShowSubmitModal(false);
     setSubmittingAssignment(null);
     setSubmitForm({ answer_text: '', link_url: '' });
     setSubmitFiles([]);
+    setSubmitKeptFiles([]);
+    setResubmitOf(null);
     setSubmitUploading(false);
     setSubmitUploadError('');
   };
@@ -1192,10 +1219,11 @@ export default function App() {
     e.preventDefault();
     if (!submittingAssignment || !selectedCourseId || !studentProfile) return;
 
-    const hasContent = submitForm.answer_text.trim() || submitFiles.length > 0 || submitForm.link_url.trim();
+    const hasContent = submitForm.answer_text.trim() || submitFiles.length > 0 || submitKeptFiles.length > 0 || submitForm.link_url.trim();
     if (!hasContent) { alert('กรุณากรอกคำตอบ หรือแนบไฟล์ หรือใส่ลิงก์งาน'); return; }
 
-    let fileUrlValue: string | undefined;
+    let fileUrlValue: string | undefined = submitKeptFiles.length === 0 ? undefined
+      : submitKeptFiles.length === 1 ? submitKeptFiles[0] : JSON.stringify(submitKeptFiles);
     if (submitFiles.length > 0) {
       setSubmitUploading(true);
       setSubmitUploadError('');
@@ -1212,7 +1240,9 @@ export default function App() {
         const { data: urlData } = supabase.storage.from('course-materials').getPublicUrl(storagePath);
         uploadedUrls.push(urlData.publicUrl);
       }
-      fileUrlValue = uploadedUrls.length === 1 ? uploadedUrls[0] : JSON.stringify(uploadedUrls);
+      // Each edit is a new attempt row (the log); files kept from the previous attempt come first.
+      const allUrls = [...submitKeptFiles, ...uploadedUrls];
+      fileUrlValue = allUrls.length === 1 ? allUrls[0] : JSON.stringify(allUrls);
       setSubmitUploading(false);
     }
 
@@ -1635,6 +1665,7 @@ export default function App() {
           onUpdateStudent={handleUpdateStudent}
           onRemoveStudentFromCourse={handleRemoveStudentFromCourse}
           onDeleteStudentAccount={handleDeleteStudentAccount}
+          onSaveGrade={handleSaveGrade}
         />
       )}
 
@@ -2546,47 +2577,17 @@ export default function App() {
                                   )}
                                   {/* Student submit button */}
                                   {role === 'student' && studentProfile && (() => {
-                                    const mySubmission = submissions.find(
-                                      s => s.student_id === studentProfile.id && s.assignment_id === assign.assignment_id
-                                    );
-                                    return mySubmission ? (
-                                      <div className="mt-2 space-y-1.5">
-                                        <div className="flex items-center gap-1.5 text-emerald-600 text-xs font-semibold">
-                                          <CheckCircle size={13} />
-                                          <span>ส่งงานแล้ว</span>
-                                          {mySubmission.submitted_at && (
-                                            <span className="text-[10px] text-slate-400 font-normal">
-                                              {new Date(mySubmission.submitted_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                                            </span>
-                                          )}
-                                        </div>
-                                        {mySubmission.answer_text && (
-                                          <p className="text-[11px] text-slate-500 bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-1.5 line-clamp-2">
-                                            {mySubmission.answer_text}
-                                          </p>
-                                        )}
-                                        <div className="flex gap-2 flex-wrap">
-                                          {parseFileUrls(mySubmission.file_url).map((url, fi) => (
-                                            <a key={fi} href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[10px] font-semibold text-indigo-600 hover:underline">
-                                              <Paperclip size={10} /> ไฟล์ {fi + 1}
-                                            </a>
-                                          ))}
-                                          {mySubmission.link_url && (
-                                            <a href={mySubmission.link_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[10px] font-semibold text-indigo-600 hover:underline">
-                                              <ExternalLink size={10} /> ลิงก์ที่ส่ง
-                                            </a>
-                                          )}
-                                        </div>
-                                      </div>
+                                    const myAttempts = attemptsOf(submissions, studentProfile.id, assign.assignment_id);
+                                    return myAttempts.length > 0 ? (
+                                      <MySubmission
+                                        attempts={myAttempts}
+                                        dueDate={assign.due_date}
+                                        canEdit={assign.status === 'open'}
+                                        onEdit={prev => openSubmitModal(assign, prev)}
+                                      />
                                     ) : assign.status === 'open' ? (
                                       <button
-                                        onClick={() => {
-                                          setSubmittingAssignment(assign);
-                                          setSubmitForm({ answer_text: '', link_url: '' });
-                                          setSubmitFiles([]);
-                                          setSubmitUploadError('');
-                                          setShowSubmitModal(true);
-                                        }}
+                                        onClick={() => openSubmitModal(assign)}
                                         className="mt-2 flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg transition"
                                       >
                                         <Send size={11} />
@@ -2619,9 +2620,10 @@ export default function App() {
                           {activeCourseActivities.filter(a => a.is_assignment).map(act => {
                             const isDue = act.due_date ? new Date(act.due_date) < new Date() : false;
                             const alType = AL_TYPES.find(t => t.type_id === act.type_id);
-                            const mySubmission = role === 'student' && studentProfile
-                              ? submissions.find(s => s.student_id === studentProfile.id && s.assignment_id === act.activity_id)
-                              : null;
+                            const myAttempts = role === 'student' && studentProfile
+                              ? attemptsOf(submissions, studentProfile.id, act.activity_id)
+                              : [];
+                            const actAsAssignment: Assignment = { assignment_id: act.activity_id, course_id: act.course_id, title: act.title, description: act.description, due_date: act.due_date || '', status: 'open' };
                             return (
                               <div key={act.activity_id} className="border border-green-200 rounded-2xl p-4 sm:p-5 flex flex-col gap-4 bg-green-50/30 hover:border-green-300 transition shadow-sm">
                                 <div className="space-y-2.5">
@@ -2696,27 +2698,16 @@ export default function App() {
                                     </button>
                                   )}
                                   {role === 'student' && studentProfile && (
-                                    mySubmission ? (
-                                      <div className="space-y-1">
-                                        <div className="flex items-center gap-1.5 text-emerald-600 text-xs font-semibold">
-                                          <CheckCircle size={13} />
-                                          <span>ส่งงานแล้ว</span>
-                                          {mySubmission.submitted_at && (
-                                            <span className="text-[10px] text-slate-400 font-normal">
-                                              {new Date(mySubmission.submitted_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                                            </span>
-                                          )}
-                                        </div>
-                                      </div>
+                                    myAttempts.length > 0 ? (
+                                      <MySubmission
+                                        attempts={myAttempts}
+                                        dueDate={act.due_date}
+                                        canEdit={!isDue}
+                                        onEdit={prev => openSubmitModal(actAsAssignment, prev)}
+                                      />
                                     ) : !isDue ? (
                                       <button
-                                        onClick={() => {
-                                          setSubmittingAssignment({ assignment_id: act.activity_id, course_id: act.course_id, title: act.title, description: act.description, due_date: act.due_date || '', status: 'open' });
-                                          setSubmitForm({ answer_text: '', link_url: '' });
-                                          setSubmitFiles([]);
-                                          setSubmitUploadError('');
-                                          setShowSubmitModal(true);
-                                        }}
+                                        onClick={() => openSubmitModal(actAsAssignment)}
                                         className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg transition"
                                       >
                                         <Send size={11} />
@@ -3971,7 +3962,9 @@ export default function App() {
             {/* Header */}
             <div className="bg-emerald-600 text-white p-5 flex items-center justify-between">
               <div className="min-w-0">
-                <p className="text-[10px] font-semibold opacity-75 uppercase tracking-widest mb-0.5">ส่งงาน</p>
+                <p className="text-[10px] font-semibold opacity-75 uppercase tracking-widest mb-0.5">
+                  {resubmitOf ? `แก้ไขงาน · จะบันทึกเป็นการส่งครั้งที่ ${(studentProfile ? attemptsOf(submissions, studentProfile.id, submittingAssignment.assignment_id).length : 0) + 1}` : 'ส่งงาน'}
+                </p>
                 <h3 className="text-sm font-bold truncate">{submittingAssignment.title}</h3>
               </div>
               <button onClick={resetSubmitModal} disabled={submitUploading} className="p-1.5 rounded-lg hover:bg-white/10 text-white/80 hover:text-white transition shrink-0">
@@ -4003,8 +3996,28 @@ export default function App() {
                 />
               </div>
 
+              {resubmitOf && (
+                <p className="text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-100 rounded-xl px-3 py-2 leading-relaxed">
+                  แก้ไขจากงานที่ส่งล่าสุด เมื่อยืนยัน ระบบจะบันทึกเป็นการส่งครั้งใหม่ และเก็บงานครั้งก่อนไว้ในประวัติการส่ง
+                </p>
+              )}
+
               {/* File upload */}
               <div className="space-y-2">
+                {submitKeptFiles.length > 0 && (
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-bold text-slate-500">ไฟล์จากการส่งครั้งก่อน (กด × เพื่อเอาออก)</p>
+                    {submitKeptFiles.map((url, i) => (
+                      <div key={url} className="flex items-center gap-2 px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-[11px] text-slate-600">
+                        <FileIcon size={10} className="text-slate-400 shrink-0" />
+                        <a href={url} target="_blank" rel="noopener noreferrer" className="truncate flex-1 text-indigo-600 hover:underline">
+                          {decodeURIComponent(url.split('/').pop() || `ไฟล์ ${i + 1}`).replace(/^[^_]+_\d+_/, '')}
+                        </a>
+                        <button type="button" aria-label="เอาไฟล์ออก" onClick={() => setSubmitKeptFiles(prev => prev.filter(u => u !== url))} className="text-slate-300 hover:text-red-400 transition shrink-0"><X size={10} /></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <label className="block text-xs font-semibold text-slate-700 flex items-center gap-1.5">
                   <Paperclip size={12} className="text-slate-400" />
                   แนบไฟล์งาน (ไม่บังคับ)
@@ -4060,7 +4073,7 @@ export default function App() {
                 </button>
                 <button type="submit" disabled={submitUploading} className="flex items-center gap-1.5 text-xs text-white bg-emerald-600 hover:bg-emerald-700 font-bold px-5 py-2.5 rounded-xl transition disabled:opacity-50">
                   {submitUploading && <Loader2 size={13} className="animate-spin" />}
-                  {submitUploading ? 'กำลังอัปโหลด...' : 'ยืนยันส่งงาน'}
+                  {submitUploading ? 'กำลังอัปโหลด...' : resubmitOf ? 'ยืนยันส่งงานใหม่' : 'ยืนยันส่งงาน'}
                   {!submitUploading && <Send size={13} />}
                 </button>
               </div>
