@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { CheckCircle, ChevronDown, History, Pencil } from 'lucide-react';
+import { CheckCircle, ChevronDown, History, Pencil, Trash2 } from 'lucide-react';
 import { AssignmentSubmission } from '../types';
 import { SubmissionContent, GradeFeedback } from './GradingSection';
-import { isLateSubmission } from '../utils/grading';
+import { isLateSubmission, isGraded } from '../utils/grading';
 
 const fmt = (iso?: string) =>
   iso ? new Date(iso).toLocaleString('th-TH', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
@@ -16,7 +16,8 @@ export const MySubmission: React.FC<{
   dueDate?: string;
   canEdit: boolean;
   onEdit: (latest: AssignmentSubmission) => void;
-}> = ({ attempts, dueDate, canEdit, onEdit }) => {
+  onDelete?: (sub: AssignmentSubmission) => void;   // offered while canEdit, for ungraded attempts
+}> = ({ attempts, dueDate, canEdit, onEdit, onDelete }) => {
   const [showLog, setShowLog] = useState(false);
   const latest = attempts[0];
   if (!latest) return null;
@@ -44,6 +45,15 @@ export const MySubmission: React.FC<{
             <Pencil size={11} /> แก้ไข / ส่งงานใหม่
           </button>
         )}
+        {canEdit && onDelete && !isGraded(latest.note) && (
+          <button
+            type="button"
+            onClick={() => onDelete(latest)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold text-red-600 bg-white hover:bg-red-50 border border-red-200 rounded-lg transition"
+          >
+            <Trash2 size={11} /> {n > 1 ? 'ลบงานครั้งนี้' : 'ลบงานที่ส่ง'}
+          </button>
+        )}
         {n > 1 && (
           <button
             type="button"
@@ -55,19 +65,37 @@ export const MySubmission: React.FC<{
           </button>
         )}
       </div>
-      {showLog && n > 1 && <SubmissionLog attempts={attempts} dueDate={dueDate} />}
+      {canEdit && isGraded(latest.note) && (
+        <p className="text-[10px] text-slate-400">งานที่ผู้สอนตรวจแล้วลบไม่ได้ แต่ส่งงานใหม่ได้</p>
+      )}
+      {showLog && n > 1 && (
+        <SubmissionLog attempts={attempts} dueDate={dueDate} onDelete={canEdit ? onDelete : undefined} />
+      )}
     </div>
   );
 };
 
 /** Earlier attempts (all but the newest), newest first. */
-export const SubmissionLog: React.FC<{ attempts: AssignmentSubmission[]; dueDate?: string }> = ({ attempts, dueDate }) => (
+export const SubmissionLog: React.FC<{
+  attempts: AssignmentSubmission[];
+  dueDate?: string;
+  onDelete?: (sub: AssignmentSubmission) => void;
+}> = ({ attempts, dueDate, onDelete }) => (
   <div className="border-l-2 border-slate-200 pl-3 space-y-3">
     {attempts.slice(1).map((s, i) => (
       <div key={s.submission_id} className="space-y-1.5">
         <p className="text-[10px] font-bold text-slate-500 flex items-center gap-1.5 flex-wrap">
           ครั้งที่ {attempts.length - 1 - i} · {fmt(s.submitted_at)}
           {isLateSubmission(s.submitted_at, dueDate) && <span className="text-red-600">· ส่งช้า</span>}
+          {onDelete && !isGraded(s.note) && (
+            <button
+              type="button"
+              onClick={() => onDelete(s)}
+              className="inline-flex items-center gap-1 ml-auto text-[10px] font-bold text-red-500 hover:text-red-700"
+            >
+              <Trash2 size={10} /> ลบ
+            </button>
+          )}
         </p>
         <div className="opacity-80"><SubmissionContent sub={s} /></div>
         <GradeFeedback note={s.note} compact />

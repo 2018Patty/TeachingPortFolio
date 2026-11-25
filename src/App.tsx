@@ -1204,6 +1204,24 @@ export default function App() {
     setShowSubmitModal(true);
   };
 
+  /** A student deletes one of their own (ungraded) submission attempts. */
+  const handleDeleteSubmission = async (sub: AssignmentSubmission) => {
+    if (!studentProfile || sub.student_id !== studentProfile.id) return;
+    if (!confirm('ลบงานที่ส่งครั้งนี้? ลบแล้วกู้คืนไม่ได้')) return;
+    const { error } = await supabase.from('assignment_submissions').delete()
+      .eq('submission_id', sub.submission_id).eq('student_id', studentProfile.id);
+    if (error) { alert(`ลบงานไม่สำเร็จ: ${error.message}`); return; }
+    const remaining = submissions.filter(s => s.submission_id !== sub.submission_id);
+    setSubmissions(remaining);
+    // Remove uploaded files no other attempt still uses (best effort).
+    const stillUsed = new Set(remaining.flatMap(s => parseFileUrls(s.file_url)));
+    const marker = '/object/public/course-materials/';
+    const paths = parseFileUrls(sub.file_url)
+      .filter(u => !stillUsed.has(u) && u.includes(marker))
+      .map(u => decodeURIComponent(u.split(marker)[1].split('?')[0]));
+    if (paths.length) await supabase.storage.from('course-materials').remove(paths);
+  };
+
   const resetSubmitModal = () => {
     setShowSubmitModal(false);
     setSubmittingAssignment(null);
@@ -2584,6 +2602,7 @@ export default function App() {
                                         dueDate={assign.due_date}
                                         canEdit={assign.status === 'open'}
                                         onEdit={prev => openSubmitModal(assign, prev)}
+                                        onDelete={handleDeleteSubmission}
                                       />
                                     ) : assign.status === 'open' ? (
                                       <button
@@ -2704,6 +2723,7 @@ export default function App() {
                                         dueDate={act.due_date}
                                         canEdit={!isDue}
                                         onEdit={prev => openSubmitModal(actAsAssignment, prev)}
+                                        onDelete={handleDeleteSubmission}
                                       />
                                     ) : !isDue ? (
                                       <button
