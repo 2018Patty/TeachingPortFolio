@@ -61,7 +61,7 @@ import {
 } from './utils/enrollGroups';
 import { StudentProfilePage } from './components/StudentProfilePage';
 import { AssignmentAttachments } from './components/AssignmentAttachments';
-import { parseAttachments, serializeAttachments, looksLikeVideo, splitActivityFileUrl, buildActivityFileUrl, type AttachmentLink } from './utils/assignmentLinks';
+import { parseAttachments, serializeAttachments, looksLikeVideo, splitActivityFileUrl, buildActivityFileUrl, isActivityAnchorId, type AttachmentLink } from './utils/assignmentLinks';
 import { ActivityVideos } from './components/AssignmentAttachments';
 import { BackOffice } from './components/BackOffice';
 import { PDPAConsentBanner } from './components/PDPAConsentBanner';
@@ -254,7 +254,8 @@ export default function App() {
       setMaterials(materialsRes.data as Material[]);
     }
     if (!assignmentsRes.error && assignmentsRes.data) {
-      setAssignments(assignmentsRes.data as Assignment[]);
+      // Rows whose id is an activity id only anchor Active Learning submissions (FK); hide them.
+      setAssignments((assignmentsRes.data as Assignment[]).filter(a => !isActivityAnchorId(a.assignment_id)));
     }
     if (!questionsRes.error && questionsRes.data) {
       setQuestions(questionsRes.data as Question[]);
@@ -873,6 +874,10 @@ export default function App() {
     if (!confirm('ลบกิจกรรม Active Learning นี้?')) return;
     const { error } = await supabase.from('active_learning').delete().eq('activity_id', activityId);
     if (error) { alert(`ไม่สามารถลบได้: ${error.message}`); return; }
+    // Clean up submissions and the hidden anchor row used by activity submissions.
+    await supabase.from('assignment_submissions').delete().eq('assignment_id', activityId);
+    await supabase.from('assignments').delete().eq('assignment_id', activityId);
+    setSubmissions(prev => prev.filter(s => s.assignment_id !== activityId));
     setActivities(activities.filter((a: ActiveLearning) => a.activity_id !== activityId));
   };
 
@@ -1222,6 +1227,19 @@ export default function App() {
       file_url: fileUrlValue,
       link_url: submitForm.link_url.trim() || undefined,
     };
+    // assignment_submissions.assignment_id references assignments, so an Active Learning
+    // activity needs a hidden anchor row there (same id) before its first submission.
+    if (isActivityAnchorId(newSub.assignment_id) && !assignments.some(a => a.assignment_id === newSub.assignment_id)) {
+      const { error: anchorError } = await supabase.from('assignments').upsert({
+        assignment_id: newSub.assignment_id,
+        course_id: selectedCourseId,
+        title: submittingAssignment.title,
+        description: '',
+        due_date: submittingAssignment.due_date || new Date().toISOString().slice(0, 10),
+        status: 'closed',
+      }, { onConflict: 'assignment_id', ignoreDuplicates: true });
+      if (anchorError) { alert(`ส่งงานไม่สำเร็จ: ${anchorError.message}`); return; }
+    }
     const { error } = await supabase.from('assignment_submissions').insert(newSub);
     if (error) { alert(`ส่งงานไม่สำเร็จ: ${error.message}`); return; }
     setSubmissions(prev => [newSub, ...prev]);

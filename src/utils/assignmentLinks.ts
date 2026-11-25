@@ -110,3 +110,7 @@ export const buildActivityFileUrl = (files: string[], videos: AttachmentLink[]):
   if (v.length === 0) return f.length === 0 ? '' : f.length === 1 ? f[0] : JSON.stringify(f);
   return JSON.stringify([...f, ...v]);
 };
+
+/** Active Learning activity ids ("al-…") also appear in `assignments` as hidden anchor rows
+ *  so that assignment_submissions' foreign key accepts submissions for activities. */
+export const isActivityAnchorId = (id?: string | null): boolean => (id || '').startsWith('al-');
