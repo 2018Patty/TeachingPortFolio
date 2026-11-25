@@ -42,7 +42,9 @@ import {
   AlertCircle as AlertCircleIcon,
   Loader2,
   File as FileIcon,
-  Users as UsersIcon
+  Users as UsersIcon,
+  ArrowUp,
+  ArrowDown
 } from 'lucide-react';
 
 import { Role, StudentProfile, StudentCourseVisit, AssignmentSubmission, Course, Material, Assignment, MaterialType, AssignmentStatus, SiteProfile, Question, Reply, ActiveLearning, TeachingReflection, AL_TYPES, SemesterSchedule } from './types';
@@ -1344,7 +1346,8 @@ export default function App() {
           type: fileType,
           week_number: Number(materialForm.week_number),
           file_url: publicUrl,
-          description: materialForm.description.trim()
+          description: materialForm.description.trim(),
+          created_at: new Date(Date.now() + i).toISOString(),
         };
 
         const { error: insertError } = await supabase.from('materials').insert(newMaterial);
@@ -1374,12 +1377,61 @@ export default function App() {
       type: materialForm.type,
       week_number: Number(materialForm.week_number),
       file_url: materialForm.file_url.trim() || 'https://example.com',
-      description: materialForm.description.trim()
+      description: materialForm.description.trim(),
+      created_at: new Date().toISOString(),
     };
     const { error } = await supabase.from('materials').insert(newMaterial);
     if (error) { alert(`ไม่สามารถเพิ่มเอกสารได้: ${error.message}`); return; }
     setMaterials([...materials, newMaterial]);
     resetMaterialModal();
+  };
+
+  // Display order of materials: by week, then by created_at (used as the order
+  // key inside a week — swapped when the admin moves an item up or down).
+  const compareMaterials = (a: Material, b: Material) =>
+    (a.week_number || 0) - (b.week_number || 0)
+    || (a.created_at || '').localeCompare(b.created_at || '')
+    || a.material_id.localeCompare(b.material_id);
+
+  const [movingMaterialId, setMovingMaterialId] = useState<string | null>(null);
+
+  // Swap a material with its neighbour (same course and week) by exchanging created_at.
+  const handleMoveMaterial = async (mat: Material, dir: -1 | 1) => {
+    const sameWeek = materials
+      .filter(m => m.course_id === mat.course_id && (m.week_number || 0) === (mat.week_number || 0))
+      .sort(compareMaterials);
+    const idx = sameWeek.findIndex(m => m.material_id === mat.material_id);
+    const other = sameWeek[idx + dir];
+    if (idx < 0 || !other) return;
+
+    let aTime = mat.created_at || '';
+    let bTime = other.created_at || '';
+    if (!aTime || !bTime || aTime === bTime) {
+      // Missing/equal timestamps: give the pair two distinct ones first.
+      const base = Date.parse(aTime || bTime) || Date.now();
+      aTime = new Date(base).toISOString();
+      bTime = new Date(base + 1).toISOString();
+      if (dir === -1) [aTime, bTime] = [bTime, aTime];
+    }
+    const newMat = bTime;   // mat takes the neighbour's place
+    const newOther = aTime;
+
+    setMovingMaterialId(mat.material_id);
+    const prev = materials;
+    setMaterials(ms => ms.map(m =>
+      m.material_id === mat.material_id ? { ...m, created_at: newMat }
+      : m.material_id === other.material_id ? { ...m, created_at: newOther } : m));
+    try {
+      const r1 = await supabase.from('materials').update({ created_at: newMat }).eq('material_id', mat.material_id);
+      if (r1.error) throw r1.error;
+      const r2 = await supabase.from('materials').update({ created_at: newOther }).eq('material_id', other.material_id);
+      if (r2.error) throw r2.error;
+    } catch (err) {
+      setMaterials(prev);
+      alert(`สลับลำดับไม่สำเร็จ: ${err instanceof Error ? err.message : (err as { message?: string })?.message || String(err)}`);
+    } finally {
+      setMovingMaterialId(null);
+    }
   };
 
   const handleDeleteMaterial = async (materialId: string) => {
@@ -1983,8 +2035,12 @@ export default function App() {
                       {activeCourseMaterials.length > 0 ? (
                         <div className="space-y-4">
                           {activeCourseMaterials
-                            .sort((a, b) => (a.week_number || 0) - (b.week_number || 0))
-                            .map((mat) => {
+                            .sort(compareMaterials)
+                            .map((mat, matIdx, sortedMats) => {
+                              const prevMat = sortedMats[matIdx - 1];
+                              const nextMat = sortedMats[matIdx + 1];
+                              const canMoveUp = !!prevMat && (prevMat.week_number || 0) === (mat.week_number || 0);
+                              const canMoveDown = !!nextMat && (nextMat.week_number || 0) === (mat.week_number || 0);
                               // Choose Icon based on Type
                               const getMatIcon = (type: MaterialType) => {
                                 switch (type) {
@@ -2042,6 +2098,26 @@ export default function App() {
                                     {/* Only admin edit/delete */}
                                     {role === 'admin' && (
                                       <>
+                                        <div className="flex flex-col">
+                                          <button
+                                            onClick={() => handleMoveMaterial(mat, -1)}
+                                            disabled={!canMoveUp || movingMaterialId !== null}
+                                            className="p-1 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition duration-150 disabled:opacity-25 disabled:hover:bg-transparent disabled:hover:text-slate-400 disabled:cursor-not-allowed"
+                                            title={canMoveUp ? 'เลื่อนขึ้น' : 'อยู่ลำดับแรกของสัปดาห์นี้แล้ว'}
+                                            aria-label="เลื่อนขึ้น"
+                                          >
+                                            <ArrowUp size={13} />
+                                          </button>
+                                          <button
+                                            onClick={() => handleMoveMaterial(mat, 1)}
+                                            disabled={!canMoveDown || movingMaterialId !== null}
+                                            className="p-1 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition duration-150 disabled:opacity-25 disabled:hover:bg-transparent disabled:hover:text-slate-400 disabled:cursor-not-allowed"
+                                            title={canMoveDown ? 'เลื่อนลง' : 'อยู่ลำดับสุดท้ายของสัปดาห์นี้แล้ว'}
+                                            aria-label="เลื่อนลง"
+                                          >
+                                            <ArrowDown size={13} />
+                                          </button>
+                                        </div>
                                         <button
                                           onClick={() => handleEditMaterialClick(mat)}
                                           className="p-2 rounded-xl text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition duration-150"
