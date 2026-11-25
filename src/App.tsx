@@ -61,7 +61,8 @@ import {
 } from './utils/enrollGroups';
 import { StudentProfilePage } from './components/StudentProfilePage';
 import { AssignmentAttachments } from './components/AssignmentAttachments';
-import { parseAttachments, serializeAttachments, looksLikeVideo, type AttachmentLink } from './utils/assignmentLinks';
+import { parseAttachments, serializeAttachments, looksLikeVideo, splitActivityFileUrl, buildActivityFileUrl, type AttachmentLink } from './utils/assignmentLinks';
+import { ActivityVideos } from './components/AssignmentAttachments';
 import { BackOffice } from './components/BackOffice';
 import { PDPAConsentBanner } from './components/PDPAConsentBanner';
 import { PDPAPrivacyModal } from './components/PDPAPrivacyModal';
@@ -192,6 +193,7 @@ export default function App() {
   const [showActivityModal, setShowActivityModal] = useState(false);
   const [editingActivity, setEditingActivity] = useState<ActiveLearning | null>(null);
   const [activityForm, setActivityForm] = useState({ type_id: '', title: '', description: '', duration: '', file_url: '' });
+  const [activityVideos, setActivityVideos] = useState<AttachmentLink[]>([]);
   const [activityFiles, setActivityFiles] = useState<File[]>([]);
   const [activityUploading, setActivityUploading] = useState(false);
   const [activityUploadError, setActivityUploadError] = useState('');
@@ -811,6 +813,7 @@ export default function App() {
     setShowActivityModal(false);
     setEditingActivity(null);
     setActivityForm({ type_id: '', title: '', description: '', duration: '', week_number: 1, file_url: '' });
+    setActivityVideos([]);
     setActivityFiles([]);
     setActivityUploading(false);
     setActivityUploadError('');
@@ -826,7 +829,9 @@ export default function App() {
     const resolvedTitle = activityForm.title.trim() || selectedType?.name || '';
     if (!resolvedTitle) { alert('กรุณาเลือกประเภทกิจกรรมหรือระบุชื่อกิจกรรม'); return; }
 
-    let fileUrl = activityForm.file_url.trim();
+    const badVideo = activityVideos.find(l => l.url.trim() && !/^https?:\/\//i.test(l.url.trim()));
+    if (badVideo) { alert(`ลิงก์วีดีโอต้องขึ้นต้นด้วย http:// หรือ https://\n${badVideo.url}`); return; }
+    let fileList = splitActivityFileUrl(activityForm.file_url).files;
 
     if (activityFiles.length > 0) {
       setActivityUploading(true);
@@ -844,9 +849,10 @@ export default function App() {
         const { data: urlData } = supabase.storage.from('course-materials').getPublicUrl(storagePath);
         uploadedUrls.push(urlData.publicUrl);
       }
-      fileUrl = uploadedUrls.length === 1 ? uploadedUrls[0] : JSON.stringify(uploadedUrls);
+      fileList = uploadedUrls;
       setActivityUploading(false);
     }
+    const fileUrl = buildActivityFileUrl(fileList, activityVideos);
 
     if (editingActivity) {
       const updateData = { type_id: activityForm.type_id, title: resolvedTitle, description: activityForm.description.trim(), duration: activityForm.duration.trim(), week_number: Number(activityForm.week_number) || 1, file_url: fileUrl, is_assignment: activityIsAssignment, due_date: activityIsAssignment ? activityDueDate.trim() : null };
@@ -873,6 +879,7 @@ export default function App() {
   const handleEditActivityClick = (activity: ActiveLearning) => {
     setEditingActivity(activity);
     setActivityForm({ type_id: activity.type_id || '', title: activity.title, description: activity.description, duration: activity.duration, week_number: activity.week_number ?? 1, file_url: activity.file_url || '' });
+    setActivityVideos(splitActivityFileUrl(activity.file_url).videos);
     setActivityFiles([]);
     setActivityUploadError('');
     setActivityIsAssignment(activity.is_assignment || false);
@@ -950,15 +957,8 @@ export default function App() {
   };
 
   // Helper: parse file_url that may be JSON array or a single URL string
-  const parseFileUrls = (fileUrl?: string | null): string[] => {
-    if (!fileUrl) return [];
-    try {
-      const parsed = JSON.parse(fileUrl);
-      return Array.isArray(parsed) ? parsed.filter(Boolean) : [fileUrl];
-    } catch {
-      return [fileUrl];
-    }
-  };
+  // (file URLs only — video links of activities are read with splitActivityFileUrl)
+  const parseFileUrls = (fileUrl?: string | null): string[] => splitActivityFileUrl(fileUrl).files;
 
   // Filtered course items
   const filteredCourses = courses.filter(
@@ -2652,8 +2652,10 @@ export default function App() {
                                   )}
                                 </div>
 
+                                <ActivityVideos raw={act.file_url} />
+
                                 <div className="flex items-center justify-between pt-2 border-t border-green-100 text-xs font-semibold">
-                                  {act.file_url ? (
+                                  {parseFileUrls(act.file_url).length > 0 ? (
                                     <div className="flex flex-wrap gap-1.5">
                                       {parseFileUrls(act.file_url).map((url, fi) => (
                                         <a key={fi} href={url} target="_blank" rel="noopener noreferrer"
@@ -2663,7 +2665,7 @@ export default function App() {
                                         </a>
                                       ))}
                                     </div>
-                                  ) : (
+                                  ) : splitActivityFileUrl(act.file_url).videos.length > 0 ? <span /> : (
                                     <span className="text-[10px] text-slate-400 italic">ไม่มีไฟล์แนบ</span>
                                   )}
                                   {role === 'admin' && (
@@ -2725,7 +2727,7 @@ export default function App() {
                         </div>
                         {role === 'admin' && (
                           <button
-                            onClick={() => { setEditingActivity(null); setActivityForm({ type_id: '', title: '', description: '', duration: '', week_number: 1, file_url: '' }); setActivityFiles([]); setActivityIsAssignment(false); setActivityDueDate(''); setActivityUploadError(''); setShowActivityModal(true); }}
+                            onClick={() => { setEditingActivity(null); setActivityForm({ type_id: '', title: '', description: '', duration: '', week_number: 1, file_url: '' }); setActivityVideos([]); setActivityFiles([]); setActivityIsAssignment(false); setActivityDueDate(''); setActivityUploadError(''); setShowActivityModal(true); }}
                             className="flex items-center gap-1.5 text-xs font-bold text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 px-3 py-1.5 rounded-xl transition-all"
                           >
                             <Plus size={14} />
@@ -2765,7 +2767,10 @@ export default function App() {
                                 </div>
                               </div>
                               {act.description && <p className="text-xs text-slate-600 leading-relaxed pl-9">{act.description}</p>}
-                              {act.file_url && (
+                              {splitActivityFileUrl(act.file_url).videos.length > 0 && (
+                                <div className="pl-9"><ActivityVideos raw={act.file_url} /></div>
+                              )}
+                              {parseFileUrls(act.file_url).length > 0 && (
                                 <div className="pl-9 flex flex-wrap gap-1.5">
                                   {parseFileUrls(act.file_url).map((url, fi) => (
                                     <a
@@ -3818,6 +3823,52 @@ export default function App() {
                 )}
               </div>
 
+              {/* Video links */}
+              <div className="space-y-2 pt-1">
+                <label className="block text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                  <Video size={12} className="text-rose-400" />
+                  ลิงก์วีดีโอประกอบกิจกรรม (ไม่บังคับ)
+                </label>
+                {activityVideos.map((link, i) => (
+                  <div key={i} className="border border-slate-200 rounded-xl p-2.5 space-y-2 bg-slate-50/50">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="url"
+                        value={link.url}
+                        onChange={e => setActivityVideos(vs => vs.map((v, j) => j === i ? { ...v, url: e.target.value } : v))}
+                        placeholder="เช่น https://www.youtube.com/watch?v=... หรือลิงก์ Google Drive"
+                        className="flex-1 min-w-0 text-xs text-slate-900 border border-slate-200 rounded-lg px-3 py-1.5 bg-white focus:ring-2 focus:ring-green-500 focus:outline-none"
+                        aria-label="ลิงก์วีดีโอ"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setActivityVideos(vs => vs.filter((_, j) => j !== i))}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition shrink-0"
+                        title="ลบลิงก์นี้"
+                        aria-label="ลบลิงก์วีดีโอนี้"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      value={link.label || ''}
+                      onChange={e => setActivityVideos(vs => vs.map((v, j) => j === i ? { ...v, label: e.target.value } : v))}
+                      placeholder="ชื่อที่แสดง (ไม่บังคับ) เช่น วีดีโอ How Websites Work"
+                      className="w-full text-[11px] text-slate-700 border border-slate-200 rounded-lg px-3 py-1.5 bg-white focus:ring-2 focus:ring-green-500 focus:outline-none"
+                      aria-label="ชื่อวีดีโอที่แสดง"
+                    />
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setActivityVideos(vs => [...vs, { kind: 'video', url: '' }])}
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-100 px-2.5 py-1.5 rounded-lg transition"
+                >
+                  <Plus size={12} /> เพิ่มลิงก์วีดีโอ
+                </button>
+              </div>
+
               {/* File attachment */}
               <div className="space-y-2 pt-1">
                 <label className="block text-xs font-semibold text-slate-700 flex items-center gap-1.5">
@@ -3827,7 +3878,7 @@ export default function App() {
 
                 {/* Show existing file when editing */}
                 {/* Existing files when editing */}
-                {editingActivity && activityForm.file_url && activityFiles.length === 0 && (
+                {editingActivity && parseFileUrls(activityForm.file_url).length > 0 && activityFiles.length === 0 && (
                   <div className="space-y-1">
                     {parseFileUrls(activityForm.file_url).map((url, i) => (
                       <div key={i} className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl">

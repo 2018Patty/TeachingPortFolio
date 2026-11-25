@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Paperclip, PlayCircle, ExternalLink, X } from 'lucide-react';
 import {
-  parseAttachments, videoEmbedUrl, isDirectVideoFile, type AttachmentLink,
+  parseAttachments, serializeAttachments, splitActivityFileUrl, videoEmbedUrl, isDirectVideoFile, type AttachmentLink,
 } from '../utils/assignmentLinks';
 
 const linkLabel = (l: AttachmentLink, i: number, all: AttachmentLink[]) => {
@@ -115,4 +115,11 @@ export const AssignmentAttachments: React.FC<{
       )}
     </div>
   );
+};
+
+/** Video links of an Active Learning activity (from active_learning.file_url). */
+export const ActivityVideos: React.FC<{ raw?: string }> = ({ raw }) => {
+  const { videos } = splitActivityFileUrl(raw);
+  if (videos.length === 0) return null;
+  return <AssignmentAttachments raw={serializeAttachments(videos)} />;
 };

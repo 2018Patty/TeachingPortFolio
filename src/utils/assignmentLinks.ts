@@ -73,3 +73,40 @@ export const videoEmbedUrl = (url: string): string | null => {
 
 export const isDirectVideoFile = (url: string): boolean =>
   /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(url);
+
+// ── Active Learning: active_learning.file_url ────────────────────────────────
+// Formats: one plain URL, or a JSON array whose items are uploaded-file URLs
+// (strings) and video links ({ kind: 'video', url, label? }).
+
+export const splitActivityFileUrl = (raw?: string | null): { files: string[]; videos: AttachmentLink[] } => {
+  const s = (raw || '').trim();
+  if (!s) return { files: [], videos: [] };
+  let items: unknown[] = [s];
+  if (s.startsWith('[')) {
+    try {
+      const p = JSON.parse(s);
+      if (Array.isArray(p)) items = p;
+    } catch { /* plain URL */ }
+  }
+  const files: string[] = [];
+  const videos: AttachmentLink[] = [];
+  for (const it of items) {
+    if (typeof it === 'string') {
+      if (it.trim()) files.push(it.trim());
+    } else if (it && typeof it === 'object' && typeof (it as AttachmentLink).url === 'string' && (it as AttachmentLink).url.trim()) {
+      const l = it as AttachmentLink;
+      if (l.kind === 'video') videos.push({ kind: 'video', url: l.url.trim(), label: l.label?.trim() || undefined });
+      else files.push(l.url.trim());
+    }
+  }
+  return { files, videos };
+};
+
+export const buildActivityFileUrl = (files: string[], videos: AttachmentLink[]): string => {
+  const f = files.map(x => x.trim()).filter(Boolean);
+  const v = videos
+    .map(l => ({ kind: 'video' as const, url: l.url.trim(), ...(l.label?.trim() ? { label: l.label.trim() } : {}) }))
+    .filter(l => l.url);
+  if (v.length === 0) return f.length === 0 ? '' : f.length === 1 ? f[0] : JSON.stringify(f);
+  return JSON.stringify([...f, ...v]);
+};

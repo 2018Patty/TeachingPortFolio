@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { AssignmentAttachments } from './AssignmentAttachments';
+import { AssignmentAttachments, ActivityVideos } from './AssignmentAttachments';
+import { splitActivityFileUrl } from '../utils/assignmentLinks';
 import {
   User, BookOpen, FileText, Video, ExternalLink, ChevronRight,
   ArrowLeft, Layers, GraduationCap, Mail, IdCard, Edit, Save,
@@ -742,14 +743,12 @@ export const StudentProfilePage: React.FC<Props> = ({
                             </p>
                           )}
 
-                          {act.file_url && (
+                          {splitActivityFileUrl(act.file_url).videos.length > 0 && (
+                            <div className="pl-11"><ActivityVideos raw={act.file_url} /></div>
+                          )}
+                          {splitActivityFileUrl(act.file_url).files.length > 0 && (
                             <div className="pl-11 flex flex-wrap gap-1.5">
-                              {(() => {
-                                try {
-                                  const p = JSON.parse(act.file_url!);
-                                  return Array.isArray(p) ? p.filter(Boolean) : [act.file_url!];
-                                } catch { return [act.file_url!]; }
-                              })().map((url: string, fi: number) => (
+                              {splitActivityFileUrl(act.file_url).files.map((url: string, fi: number) => (
                                 <a
                                   key={fi}
                                   href={url}
