@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { AssignmentAttachments } from './AssignmentAttachments';
 import {
   User, BookOpen, FileText, Video, ExternalLink, ChevronRight,
   ArrowLeft, Layers, GraduationCap, Mail, IdCard, Edit, Save,
@@ -676,17 +677,7 @@ export const StudentProfilePage: React.FC<Props> = ({
                                 <Clock size={10} />
                                 กำหนดส่ง: {assign.due_date}
                               </span>
-                              {assign.attachment_url && (
-                                <a
-                                  href={assign.attachment_url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="flex items-center gap-1 text-indigo-600 hover:text-indigo-800 font-bold"
-                                >
-                                  <Paperclip size={10} />
-                                  ไฟล์งาน
-                                </a>
-                              )}
+                              <AssignmentAttachments raw={assign.attachment_url} variant="compact" />
                               {submitted && mySub?.submitted_at && (
                                 <span className="text-emerald-600 font-bold">
                                   ส่งเมื่อ: {new Date(mySub.submitted_at).toLocaleDateString('th-TH', {

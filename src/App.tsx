@@ -60,6 +60,8 @@ import {
   parseGroupCodes, joinGroupCodes, codesIdentifyGroup, withGroupInVisitId, makeAddedVisitId,
 } from './utils/enrollGroups';
 import { StudentProfilePage } from './components/StudentProfilePage';
+import { AssignmentAttachments } from './components/AssignmentAttachments';
+import { parseAttachments, serializeAttachments, looksLikeVideo, type AttachmentLink } from './utils/assignmentLinks';
 import { BackOffice } from './components/BackOffice';
 import { PDPAConsentBanner } from './components/PDPAConsentBanner';
 import { PDPAPrivacyModal } from './components/PDPAPrivacyModal';
@@ -218,6 +220,8 @@ export default function App() {
     attachment_url: '',
     status: 'open' as AssignmentStatus
   });
+  // Attachment links (files / videos) edited in the assignment form
+  const [assignmentLinks, setAssignmentLinks] = useState<AttachmentLink[]>([]);
 
   // 5. Initialize lists and sync with URL Parameters
   const loadAllData = async () => {
@@ -1145,6 +1149,7 @@ export default function App() {
       attachment_url: assignment.attachment_url || '',
       status: assignment.status
     });
+    setAssignmentLinks(parseAttachments(assignment.attachment_url));
     setShowAssignmentModal(true);
   };
 
@@ -1446,6 +1451,9 @@ export default function App() {
   const handleAddAssignment = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!selectedCourseId) return;
+    const badLink = assignmentLinks.find(l => l.url.trim() && !/^https?:\/\//i.test(l.url.trim()));
+    if (badLink) { alert(`ลิงก์ต้องขึ้นต้นด้วย http:// หรือ https://\n${badLink.url}`); return; }
+    const attachmentValue = serializeAttachments(assignmentLinks);
 
     if (editingAssignment) {
       const updateData = {
@@ -1453,7 +1461,7 @@ export default function App() {
         description: assignmentForm.description.trim(),
         due_date: assignmentForm.due_date,
         week_number: Number(assignmentForm.week_number) || 1,
-        attachment_url: assignmentForm.attachment_url.trim() || '',
+        attachment_url: attachmentValue,
         status: assignmentForm.status
       };
       const { error } = await supabase.from('assignments').update(updateData).eq('assignment_id', editingAssignment.assignment_id);
@@ -1469,7 +1477,7 @@ export default function App() {
         description: assignmentForm.description.trim(),
         due_date: assignmentForm.due_date,
         week_number: Number(assignmentForm.week_number) || 1,
-        attachment_url: assignmentForm.attachment_url.trim() || undefined,
+        attachment_url: attachmentValue || undefined,
         status: assignmentForm.status
       };
       const { error } = await supabase.from('assignments').insert(newAssignment);
@@ -1479,6 +1487,7 @@ export default function App() {
 
     setShowAssignmentModal(false);
     setAssignmentForm({ title: '', description: '', due_date: '2026-06-30', week_number: 1, attachment_url: '', status: 'open' });
+    setAssignmentLinks([]);
   };
 
   const handleDeleteAssignment = async (assignmentId: string) => {
@@ -2488,20 +2497,14 @@ export default function App() {
                                   </div>
                                 </div>
 
+                                {parseAttachments(assign.attachment_url).length > 0 && (
+                                  <AssignmentAttachments raw={assign.attachment_url} />
+                                )}
+
                                 <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs font-semibold">
-                                  {assign.attachment_url ? (
-                                    <a
-                                      href={assign.attachment_url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="inline-flex items-center gap-1 text-[11px] font-bold text-pink-700 bg-pink-50 hover:bg-pink-100 px-3 py-1.5 rounded-lg border border-pink-100/50 transition"
-                                    >
-                                      <Paperclip size={12} />
-                                      <span>ดาวน์โหลดโจทย์งาน</span>
-                                    </a>
-                                  ) : (
-                                    <span className="text-[10px] text-slate-400 italic">ไม่มีไฟล์แนบแนบไว้</span>
-                                  )}
+                                  {parseAttachments(assign.attachment_url).length === 0 ? (
+                                    <span className="text-[10px] text-slate-400 italic">ไม่มีไฟล์แนบ</span>
+                                  ) : <span />}
 
                                   {role === 'admin' && (
                                     <div className="flex items-center gap-1.5">
@@ -3531,7 +3534,7 @@ export default function App() {
                 {editingAssignment ? `แก้ไขงานมอบหมาย: ${editingAssignment.title.slice(0, 25)}…` : 'มอบหมายงานให้นักศึกษา (Add Assignment)'}
               </h3>
               <button
-                onClick={() => { setShowAssignmentModal(false); setEditingAssignment(null); setAssignmentForm({ title: '', description: '', due_date: '2026-06-30', week_number: 1, attachment_url: '', status: 'open' }); }}
+                onClick={() => { setShowAssignmentModal(false); setEditingAssignment(null); setAssignmentForm({ title: '', description: '', due_date: '2026-06-30', week_number: 1, attachment_url: '', status: 'open' }); setAssignmentLinks([]); }}
                 className="p-1.5 rounded-lg hover:bg-white/10 text-white/80 hover:text-white transition"
               >
                 <X size={15} />
@@ -3606,22 +3609,76 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="space-y-1">
-                <label htmlFor="assign-url" className="block text-xs font-semibold text-slate-700">ลิงก์แนบโจทย์งานเพิ่มเติม (ไม่บังคับ)</label>
-                <input
-                  id="assign-url"
-                  type="url"
-                  value={assignmentForm.attachment_url}
-                  onChange={(e) => setAssignmentForm({ ...assignmentForm, attachment_url: e.target.value })}
-                  placeholder="เช่น https://storage.google.com/project_guidelines.pdf"
-                  className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                />
+              <div className="space-y-2">
+                <label className="block text-xs font-semibold text-slate-700">ไฟล์ / วีดีโอประกอบ (ลิงก์ URL, ไม่บังคับ)</label>
+                {assignmentLinks.length === 0 && (
+                  <p className="text-[11px] text-slate-400">ยังไม่มีลิงก์แนบ — เพิ่มลิงก์ไฟล์ (Google Drive, PDF) หรือวีดีโอ (YouTube, Vimeo, Google Drive) ได้หลายรายการ</p>
+                )}
+                {assignmentLinks.map((link, i) => (
+                  <div key={i} className="border border-slate-200 rounded-xl p-2.5 space-y-2 bg-slate-50/50">
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={link.kind}
+                        onChange={(e) => setAssignmentLinks(ls => ls.map((l, j) => j === i ? { ...l, kind: e.target.value as AttachmentLink['kind'] } : l))}
+                        className={`text-[11px] font-bold border rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 ${link.kind === 'video' ? 'text-rose-700 bg-rose-50 border-rose-200' : 'text-pink-700 bg-pink-50 border-pink-200'}`}
+                        aria-label="ประเภทลิงก์"
+                      >
+                        <option value="file">ไฟล์</option>
+                        <option value="video">วีดีโอ</option>
+                      </select>
+                      <input
+                        type="url"
+                        value={link.url}
+                        onChange={(e) => {
+                          const url = e.target.value;
+                          setAssignmentLinks(ls => ls.map((l, j) => j === i ? { ...l, url, kind: !l.url && looksLikeVideo(url) ? 'video' : l.kind } : l));
+                        }}
+                        placeholder={link.kind === 'video' ? 'เช่น https://www.youtube.com/watch?v=...' : 'เช่น https://drive.google.com/file/d/.../view'}
+                        className="flex-1 min-w-0 text-xs text-slate-900 border border-slate-200 rounded-lg px-3 py-1.5 bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                        aria-label="ลิงก์ URL"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setAssignmentLinks(ls => ls.filter((_, j) => j !== i))}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition shrink-0"
+                        title="ลบลิงก์นี้"
+                        aria-label="ลบลิงก์นี้"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      value={link.label || ''}
+                      onChange={(e) => setAssignmentLinks(ls => ls.map((l, j) => j === i ? { ...l, label: e.target.value } : l))}
+                      placeholder={link.kind === 'video' ? 'ชื่อที่แสดง (ไม่บังคับ) เช่น วีดีโออธิบายโจทย์' : 'ชื่อที่แสดง (ไม่บังคับ) เช่น ใบงาน PDF'}
+                      className="w-full text-[11px] text-slate-700 border border-slate-200 rounded-lg px-3 py-1.5 bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                      aria-label="ชื่อที่แสดง"
+                    />
+                  </div>
+                ))}
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAssignmentLinks(ls => [...ls, { kind: 'file', url: '' }])}
+                    className="inline-flex items-center gap-1 text-[11px] font-bold text-pink-700 bg-pink-50 hover:bg-pink-100 border border-pink-100 px-2.5 py-1.5 rounded-lg transition"
+                  >
+                    <Plus size={12} /> เพิ่มลิงก์ไฟล์
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAssignmentLinks(ls => [...ls, { kind: 'video', url: '' }])}
+                    className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-100 px-2.5 py-1.5 rounded-lg transition"
+                  >
+                    <Plus size={12} /> เพิ่มลิงก์วีดีโอ
+                  </button>
+                </div>
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => { setShowAssignmentModal(false); setEditingAssignment(null); setAssignmentForm({ title: '', description: '', due_date: '2026-06-30', week_number: 1, attachment_url: '', status: 'open' }); }}
+                  onClick={() => { setShowAssignmentModal(false); setEditingAssignment(null); setAssignmentForm({ title: '', description: '', due_date: '2026-06-30', week_number: 1, attachment_url: '', status: 'open' }); setAssignmentLinks([]); }}
                   className="text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-medium px-4 py-2.5 rounded-xl transition"
                 >
                   ย้อนกลับ
@@ -3858,13 +3915,7 @@ export default function App() {
               <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2">
                 <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">โจทย์ / รายละเอียดงาน</p>
                 <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-line">{submittingAssignment.description}</p>
-                {submittingAssignment.attachment_url && (
-                  <a href={submittingAssignment.attachment_url} target="_blank" rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-pink-700 bg-pink-50 hover:bg-pink-100 border border-pink-100 px-2.5 py-1 rounded-lg transition">
-                    <Paperclip size={11} />
-                    ดาวน์โหลดไฟล์โจทย์
-                  </a>
-                )}
+                <AssignmentAttachments raw={submittingAssignment.attachment_url} variant="full" />
                 <div className="flex items-center gap-2 pt-1 text-[10px] text-slate-400">
                   <Clock size={10} />
                   กำหนดส่ง: <span className="font-semibold text-slate-600">{submittingAssignment.due_date}</span>
