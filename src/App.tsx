@@ -2041,6 +2041,9 @@ export default function App() {
                               const nextMat = sortedMats[matIdx + 1];
                               const canMoveUp = !!prevMat && (prevMat.week_number || 0) === (mat.week_number || 0);
                               const canMoveDown = !!nextMat && (nextMat.week_number || 0) === (mat.week_number || 0);
+                              const weekNo = mat.week_number || 0;
+                              const isFirstOfWeek = !prevMat || (prevMat.week_number || 0) !== weekNo;
+                              const weekItemCount = sortedMats.filter(m => (m.week_number || 0) === weekNo).length;
                               // Choose Icon based on Type
                               const getMatIcon = (type: MaterialType) => {
                                 switch (type) {
@@ -2053,8 +2056,17 @@ export default function App() {
                               };
 
                               return (
+                                <React.Fragment key={mat.material_id}>
+                                {isFirstOfWeek && (
+                                  <div className={`flex items-center gap-3 ${matIdx > 0 ? 'pt-4' : ''}`}>
+                                    <span className="shrink-0 text-xs font-extrabold text-indigo-700 bg-indigo-50 border border-indigo-100 px-3 py-1 rounded-full">
+                                      {weekNo > 0 ? `สัปดาห์ที่ ${weekNo}` : 'ไม่ระบุสัปดาห์'}
+                                    </span>
+                                    <span className="shrink-0 text-[10px] font-semibold text-slate-400">{weekItemCount} รายการ</span>
+                                    <div className="flex-1 h-px bg-slate-200" />
+                                  </div>
+                                )}
                                 <div
-                                  key={mat.material_id}
                                   className="group border border-slate-200 hover:border-slate-300 rounded-2xl p-4 flex items-center justify-between gap-4 transition duration-150 bg-slate-50/40 hover:bg-slate-50"
                                 >
                                   <div className="flex items-start gap-3">
@@ -2063,11 +2075,6 @@ export default function App() {
                                     </div>
                                     <div>
                                       <div className="flex flex-wrap items-center gap-2">
-                                        {mat.week_number && (
-                                          <span className="text-[10px] uppercase tracking-wider font-bold text-slate-500 bg-slate-100 border border-slate-200/60 px-2 py-0.5 rounded-md">
-                                            สัปดาห์ที่ {mat.week_number}
-                                          </span>
-                                        )}
                                         <span className="text-[10px] font-semibold text-slate-500 px-1.5 py-0.5 bg-slate-100/50 border border-slate-100 rounded">
                                           {mat.type}
                                         </span>
@@ -2136,6 +2143,7 @@ export default function App() {
                                     )}
                                   </div>
                                 </div>
+                                </React.Fragment>
                               );
                             })}
                         </div>
