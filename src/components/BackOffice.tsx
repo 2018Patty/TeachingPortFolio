@@ -770,6 +770,7 @@ const StudentsSection: React.FC<{
                       </div>
                     </th>
                   ))}
+                  <th className="text-center px-3 py-2.5 font-semibold text-slate-500 whitespace-nowrap" title="จำนวนงานที่ส่งแล้ว / งานทั้งหมด">ส่งงาน</th>
                   <th className="text-center px-3 py-2.5 font-semibold text-slate-500 whitespace-nowrap">รวม</th>
                   <th className="text-left px-4 py-2.5 font-semibold text-slate-500">เข้าชมล่าสุด</th>
                   <th className="text-center px-4 py-2.5 font-semibold text-slate-500">จัดการ</th>
@@ -777,7 +778,7 @@ const StudentsSection: React.FC<{
               </thead>
               <tbody>
                 {visibleRows.length === 0 && (
-                  <tr><td colSpan={8 + assignments.length} className="px-4 py-6 text-center text-slate-400 text-xs">ยังไม่มีนักศึกษาในกลุ่มนี้</td></tr>
+                  <tr><td colSpan={9 + assignments.length} className="px-4 py-6 text-center text-slate-400 text-xs">ยังไม่มีนักศึกษาในกลุ่มนี้</td></tr>
                 )}
                 {visibleRows.map(({ sid, student, visitCount, studentSubmissions, lastVisit, group, addedByTeacher }, i) => {
                   const cfg = avatarCfg(sid);
@@ -864,6 +865,20 @@ const StudentsSection: React.FC<{
                           </td>
                         );
                       })}
+                      <td className="px-3 py-3 text-center whitespace-nowrap">
+                        {(() => {
+                          const n = assignments.filter(t => studentSubmissions.some(x => x.assignment_id === t.assignment_id)).length;
+                          const all = assignments.length;
+                          const cls = all > 0 && n === all ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            : n > 0 ? 'bg-amber-50 text-amber-700 border-amber-200'
+                            : 'bg-slate-50 text-slate-400 border-slate-200';
+                          return (
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border font-bold text-[11px] ${cls}`} title={`ส่งแล้ว ${n} จาก ${all} งาน`}>
+                              <CheckCircle size={10} /> {n}/{all}
+                            </span>
+                          );
+                        })()}
+                      </td>
                       <td className="px-3 py-3 text-center whitespace-nowrap font-extrabold text-slate-700 text-[11px]">
                         {scored > 0 ? `${+total.toFixed(2)}${totalMax > 0 ? ` / ${+totalMax.toFixed(2)}` : ''}` : <span className="text-slate-300 font-normal">—</span>}
                       </td>
