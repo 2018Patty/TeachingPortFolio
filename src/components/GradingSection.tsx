@@ -131,6 +131,28 @@ export const GradeFeedback: React.FC<{ note?: string; compact?: boolean }> = ({ 
 
 // ─── One student row ──────────────────────────────────────────────────────────
 
+// Unsaved score / feedback the teacher typed (kept by the section until saved).
+interface Draft { score: string; feedback: string }
+
+const storedDraft = (sub: AssignmentSubmission): Draft => {
+  const g = parseGrade(sub.note);
+  return { score: g?.score?.toString() ?? '', feedback: g?.feedback ?? '' };
+};
+const sameDraft = (a: Draft, b: Draft) => a.score.trim() === b.score.trim() && a.feedback === b.feedback;
+
+/** Draft → grade to store (null clears grading), or an error message. */
+const draftToGrade = (d: Draft, maxScore: number | null): { grade: SubmissionGrade | null } | { error: string } => {
+  const s = d.score.trim();
+  let score: number | null = null;
+  if (s) {
+    score = Number(s);
+    if (!Number.isFinite(score) || score < 0) return { error: 'คะแนนต้องเป็นตัวเลขตั้งแต่ 0 ขึ้นไป' };
+    if (maxScore !== null && score > maxScore) return { error: `คะแนนต้องไม่เกินคะแนนเต็ม (${maxScore})` };
+  }
+  if (score === null && !d.feedback.trim()) return { grade: null };
+  return { grade: { score, max_score: maxScore, feedback: d.feedback.trim(), graded_at: new Date().toISOString() } };
+};
+
 const GradeRow: React.FC<{
   index: number;
   student?: StudentProfile;
@@ -139,61 +161,30 @@ const GradeRow: React.FC<{
   attempts: AssignmentSubmission[];   // newest first; [0] is the one graded here
   task: Task;
   maxScore: number | null;
-  onSave: SaveGrade;
-}> = ({ index, student, sid, group, attempts, task, maxScore, onSave }) => {
+  draft?: Draft;                       // unsaved edit, if any
+  onDraft: (d: Draft) => void;
+  onSave: () => void;
+  saving: boolean;
+  error: string;
+  savedFlash: boolean;
+}> = ({ index, student, sid, group, attempts, task, maxScore, draft, onDraft, onSave, saving, error, savedFlash }) => {
   const sub = attempts[0] as AssignmentSubmission | undefined;
   const [showLog, setShowLog] = useState(false);
   const grade = parseGrade(sub?.note);
-  const [score, setScore] = useState(grade?.score?.toString() ?? '');
-  const [feedback, setFeedback] = useState(grade?.feedback ?? '');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const [savedFlash, setSavedFlash] = useState(false);
-
-  // Reset when the stored grade changes (e.g. after saving, or switching task).
-  useEffect(() => {
-    setScore(grade?.score?.toString() ?? '');
-    setFeedback(grade?.feedback ?? '');
-    setError('');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sub?.submission_id, sub?.note]);
-
-  const dirty = (grade?.score?.toString() ?? '') !== score.trim() || (grade?.feedback ?? '') !== feedback;
+  const stored = sub ? storedDraft(sub) : { score: '', feedback: '' };
+  const { score, feedback } = draft ?? stored;
+  const setScore = (v: string) => onDraft({ score: v, feedback });
+  const setFeedback = (v: string) => onDraft({ score, feedback: v });
+  const dirty = !!draft && !sameDraft(draft, stored);
   const graded = isGraded(sub?.note);
   const late = sub ? isLateSubmission(sub.submitted_at, task.dueDate) : false;
   const name = student ? `${student.first_name} ${student.last_name}`.trim() : 'ไม่พบข้อมูลนักศึกษา';
-
-  const save = async () => {
-    if (!sub) return;
-    setError('');
-    const s = score.trim();
-    let scoreNum: number | null = null;
-    if (s) {
-      scoreNum = Number(s);
-      if (!Number.isFinite(scoreNum) || scoreNum < 0) { setError('คะแนนต้องเป็นตัวเลขตั้งแต่ 0 ขึ้นไป'); return; }
-      if (maxScore !== null && scoreNum > maxScore) { setError(`คะแนนต้องไม่เกินคะแนนเต็ม (${maxScore})`); return; }
-    }
-    const empty = scoreNum === null && !feedback.trim();
-    setSaving(true);
-    try {
-      await onSave(sub.submission_id, empty ? null : {
-        score: scoreNum,
-        max_score: maxScore,
-        feedback: feedback.trim(),
-        graded_at: new Date().toISOString(),
-      });
-      setSavedFlash(true);
-      setTimeout(() => setSavedFlash(false), 2000);
-    } catch (err) {
-      setError(`บันทึกไม่สำเร็จ: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setSaving(false);
-    }
-  };
+  const save = onSave;
 
   return (
     <div className={`border rounded-2xl p-4 transition ${
       !sub ? 'border-slate-200 bg-slate-50/50'
+        : dirty ? 'border-indigo-300 bg-indigo-50/30 ring-1 ring-indigo-100'
         : graded ? 'border-emerald-200 bg-emerald-50/30'
         : 'border-amber-200 bg-white'
     }`}>
@@ -301,6 +292,7 @@ const GradeRow: React.FC<{
             />
             <div className="flex items-center justify-end gap-2">
               {error && <span className="text-[10px] text-red-600 mr-auto">{error}</span>}
+              {dirty && !error && <span className="text-[10px] font-bold text-indigo-600 mr-auto">ยังไม่ได้บันทึก</span>}
               {savedFlash && !dirty && <span className="text-[10px] font-bold text-emerald-600">บันทึกแล้ว</span>}
               {grade?.graded_at && !dirty && !savedFlash && (
                 <span className="text-[10px] text-slate-400">ตรวจเมื่อ {fmtTime(grade.graded_at)}</span>
@@ -387,11 +379,33 @@ export const GradingSection: React.FC<{
   const [taskSort, setTaskSort] = useState<'assigned' | 'due'>('assigned');
   // Expanded / collapsed week groups (key = week number or 'none'); unset = default.
   const [weekOpen, setWeekOpen] = useState<Record<string, boolean>>({});
-  const selectTask = (id: string) => { setTaskId(id); setFilter('all'); setBulkMsg(null); };
+  const selectTask = (id: string) => {
+    if (task && id !== task.id) {
+      const unsaved = courseSubs.filter(s => s.assignment_id === task.id && drafts[s.submission_id]).length;
+      if (unsaved && !window.confirm(`งานนี้มีคะแนนที่ยังไม่ได้บันทึก ${unsaved} รายการ\nเปลี่ยนไปงานอื่นโดยไม่บันทึก? (คะแนนที่ยังไม่บันทึกจะหายไป)`)) return;
+      setDrafts(d => Object.fromEntries(Object.entries(d).filter(([id]) => !courseSubs.some(s => s.submission_id === id && s.assignment_id === task.id))));
+      setRowErrors({});
+    }
+    setTaskId(id); setFilter('all'); setBulkMsg(null);
+  };
   const [filter, setFilter] = useState<Filter>('all');
   const [groupFilter, setGroupFilter] = useState<'all' | number>('all');
+  // Unsaved edits per submission, plus per-row save state.
+  const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
+  const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
+  const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
   const [bulk, setBulk] = useState<{ done: number; total: number } | null>(null);
   const [bulkMsg, setBulkMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  // Warn before leaving the page with unsaved scores.
+  const hasDrafts = Object.keys(drafts).length > 0;
+  useEffect(() => {
+    if (!hasDrafts) return;
+    const h = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', h);
+    return () => window.removeEventListener('beforeunload', h);
+  }, [hasDrafts]);
 
   // Full score: from existing grades of this task, else 10.
   const [maxInputs, setMaxInputs] = useState<Record<string, string>>({});
@@ -435,50 +449,96 @@ export const GradingSection: React.FC<{
         : filter === 'graded' ? r.sub && isGraded(r.sub.note)
         : !r.sub);
 
-  // ── "Full score for everyone": students who submitted, in the selected group ──
-  const bulkTargets = rows
-    .filter(r => r.sub && (groupFilter === 'all' || r.group === groupFilter))
-    .map(r => ({ sub: r.sub!, grade: parseGrade(r.sub!.note) }));
-  const isFull = (g: SubmissionGrade | null) => !!g && maxScore !== null && g.score === maxScore;
-  const allFull = bulkTargets.length > 0 && bulkTargets.every(t => isFull(t.grade));
-
-  const runBulk = async (items: typeof bulkTargets, make: (t: typeof bulkTargets[number]) => SubmissionGrade | null, label: string) => {
+  // ── Drafts ──
+  const currentOf = (sub: AssignmentSubmission): Draft => drafts[sub.submission_id] ?? storedDraft(sub);
+  const setDraft = (sub: AssignmentSubmission, d: Draft) => {
     setBulkMsg(null);
-    setBulk({ done: 0, total: items.length });
-    let failed = 0, done = 0;
-    for (let i = 0; i < items.length; i += 8) {
-      await Promise.all(items.slice(i, i + 8).map(async t => {
-        try { await onSaveGrade(t.sub.submission_id, make(t)); }
-        catch { failed++; }
-        finally { done++; setBulk({ done, total: items.length }); }
-      }));
-    }
-    setBulk(null);
-    setBulkMsg(failed
-      ? { ok: false, text: `${label}สำเร็จ ${items.length - failed} คน · ไม่สำเร็จ ${failed} คน (ลองกดอีกครั้ง)` }
-      : { ok: true, text: `${label}แล้ว ${items.length} คน` });
+    setRowErrors(e => { const { [sub.submission_id]: _x, ...rest } = e; return rest; });
+    setDrafts(prev => {
+      const { [sub.submission_id]: _old, ...rest } = prev;
+      return sameDraft(d, storedDraft(sub)) ? rest : { ...rest, [sub.submission_id]: d };
+    });
+  };
+  const flash = (id: string) => {
+    setFlashIds(f => new Set(f).add(id));
+    setTimeout(() => setFlashIds(f => { const n = new Set(f); n.delete(id); return n; }), 2000);
   };
 
-  const toggleAllFull = async (checked: boolean) => {
-    if (maxScore === null) return;
-    const scope = groupFilter === 'all' ? '' : ` (กลุ่ม ${groupFilter})`;
-    if (checked) {
-      const todo = bulkTargets.filter(t => !isFull(t.grade));
-      const overwrite = todo.filter(t => t.grade?.score != null).length;
-      const msg = `ให้คะแนนเต็ม ${maxScore} คะแนน กับนักศึกษาที่ส่งงาน${scope} ${todo.length} คน?`
-        + (overwrite ? `\n\nมี ${overwrite} คนที่ให้คะแนนไว้แล้ว คะแนนเดิมจะถูกเปลี่ยนเป็นคะแนนเต็ม` : '')
-        + '\n(feedback ที่เขียนไว้จะยังอยู่ · นักศึกษาที่ยังไม่ส่งงานจะไม่ได้คะแนน)';
-      if (!window.confirm(msg)) return;
-      const now = new Date().toISOString();
-      await runBulk(todo, t => ({ score: maxScore, max_score: maxScore, feedback: t.grade?.feedback ?? '', graded_at: now }), 'ให้คะแนนเต็ม');
-    } else {
-      const todo = bulkTargets.filter(t => isFull(t.grade));
-      if (!window.confirm(`ล้างคะแนนเต็มของนักศึกษา${scope} ${todo.length} คน?\n(feedback ที่เขียนไว้จะยังอยู่)`)) return;
-      const now = new Date().toISOString();
-      await runBulk(todo, t => (t.grade?.feedback.trim()
-        ? { score: null, max_score: maxScore, feedback: t.grade.feedback, graded_at: now }
-        : null), 'ล้างคะแนน');
+  /** Save one submission's draft. Returns false when it could not be saved. */
+  const saveSub = async (sub: AssignmentSubmission): Promise<boolean> => {
+    const d = drafts[sub.submission_id];
+    if (!d) return true;
+    const r = draftToGrade(d, maxScore);
+    if ('error' in r) { setRowErrors(e => ({ ...e, [sub.submission_id]: r.error })); return false; }
+    setSavingIds(x => new Set(x).add(sub.submission_id));
+    try {
+      await onSaveGrade(sub.submission_id, r.grade);
+      setDrafts(prev => { const { [sub.submission_id]: _x, ...rest } = prev; return rest; });
+      setRowErrors(e => { const { [sub.submission_id]: _x, ...rest } = e; return rest; });
+      flash(sub.submission_id);
+      return true;
+    } catch (err) {
+      setRowErrors(e => ({ ...e, [sub.submission_id]: `บันทึกไม่สำเร็จ: ${err instanceof Error ? err.message : String(err)}` }));
+      return false;
+    } finally {
+      setSavingIds(x => { const n = new Set(x); n.delete(sub.submission_id); return n; });
     }
+  };
+
+  // Unsaved rows of this task (all groups / filters).
+  const dirtySubs = rows.map(r => r.sub).filter((x): x is AssignmentSubmission => !!x && !!drafts[x.submission_id]);
+
+  const saveAll = async () => {
+    if (!dirtySubs.length) return;
+    setBulkMsg(null);
+    setBulk({ done: 0, total: dirtySubs.length });
+    let ok = 0, done = 0;
+    for (let i = 0; i < dirtySubs.length; i += 8) {
+      const res = await Promise.all(dirtySubs.slice(i, i + 8).map(async sub => {
+        const r = await saveSub(sub);
+        done++; setBulk({ done, total: dirtySubs.length });
+        return r;
+      }));
+      ok += res.filter(Boolean).length;
+    }
+    setBulk(null);
+    const failed = dirtySubs.length - ok;
+    setBulkMsg(failed
+      ? { ok: false, text: `บันทึกแล้ว ${ok} รายการ · ไม่สำเร็จ ${failed} รายการ (ดูข้อความสีแดงในแต่ละแถว)` }
+      : { ok: true, text: `บันทึกแล้ว ${ok} รายการ` });
+  };
+
+  const discardAll = () => {
+    if (!window.confirm(`ยกเลิกคะแนนที่ยังไม่ได้บันทึก ${dirtySubs.length} รายการ?`)) return;
+    setDrafts(prev => Object.fromEntries(Object.entries(prev).filter(([id]) => !dirtySubs.some(s => s.submission_id === id))));
+    setRowErrors({});
+    setBulkMsg(null);
+  };
+
+  // ── "Full score for everyone": fills the score fields only; saving is separate ──
+  const bulkTargets = rows
+    .filter(r => r.sub && (groupFilter === 'all' || r.group === groupFilter))
+    .map(r => r.sub!);
+  const allFull = maxScore !== null && bulkTargets.length > 0
+    && bulkTargets.every(sub => currentOf(sub).score.trim() !== '' && Number(currentOf(sub).score) === maxScore);
+
+  const toggleAllFull = (checked: boolean) => {
+    if (maxScore === null) return;
+    setBulkMsg(null);
+    setRowErrors({});
+    setDrafts(prev => {
+      const next = { ...prev };
+      for (const sub of bulkTargets) {
+        const cur = prev[sub.submission_id] ?? storedDraft(sub);
+        const stored = storedDraft(sub);
+        // Unticking puts back the saved score (or empty if the saved one was the full score).
+        const score = checked ? String(maxScore)
+          : (stored.score.trim() !== '' && Number(stored.score) !== maxScore ? stored.score : '');
+        const d = { score, feedback: cur.feedback };
+        if (sameDraft(d, stored)) delete next[sub.submission_id]; else next[sub.submission_id] = d;
+      }
+      return next;
+    });
   };
 
   const scores = rows.map(r => parseGrade(r.sub?.note)?.score).filter((x): x is number => typeof x === 'number');
@@ -765,8 +825,10 @@ export const GradingSection: React.FC<{
           <p className="text-[10px] text-amber-700 flex items-center gap-1"><AlertCircle size={10} /> ยังไม่ได้กำหนดคะแนนเต็ม ระบบจะไม่ตรวจว่าคะแนนเกินหรือไม่</p>
         )}
 
-        {/* Give everyone who submitted the full score */}
-        <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border px-3 py-2.5 ${allFull ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-slate-50'}`}>
+        {/* Full score for everyone (fills fields) + save all — stays visible while scrolling */}
+        <div className={`sticky top-0 z-20 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border px-3 py-2.5 shadow-sm ${
+          dirtySubs.length ? 'border-indigo-200 bg-indigo-50' : 'border-slate-200 bg-slate-50'
+        }`}>
           <label className={`inline-flex items-center gap-2 text-xs font-bold select-none ${maxScore === null || bulkTargets.length === 0 || bulk ? 'text-slate-400 cursor-not-allowed' : 'text-slate-800 cursor-pointer'}`}>
             <input
               type="checkbox"
@@ -778,19 +840,40 @@ export const GradingSection: React.FC<{
             ให้คะแนนเต็มทุกคนที่ส่งงาน
             {maxScore !== null && <span className="font-normal text-slate-500">({maxScore} คะแนน · {bulkTargets.length} คน{groupFilter !== 'all' ? ` ในกลุ่ม ${groupFilter}` : ''})</span>}
           </label>
-          {bulk && (
-            <span className="inline-flex items-center gap-1.5 text-[11px] text-indigo-700 font-bold">
-              <Save size={11} className="animate-pulse" /> กำลังบันทึก {bulk.done}/{bulk.total}
-            </span>
-          )}
-          {!bulk && bulkMsg && (
-            <span className={`text-[11px] font-bold ${bulkMsg.ok ? 'text-emerald-700' : 'text-red-600'}`}>{bulkMsg.text}</span>
-          )}
-          {!bulk && !bulkMsg && (
-            <span className="text-[10px] text-slate-400">
-              {maxScore === null ? 'กำหนดคะแนนเต็มก่อน' : bulkTargets.length === 0 ? 'ยังไม่มีนักศึกษาส่งงานนี้' : allFull ? 'ทุกคนได้คะแนนเต็มแล้ว · เอาเครื่องหมายออกเพื่อล้างคะแนน' : 'นักศึกษาที่ยังไม่ส่งงานจะไม่ได้คะแนน'}
-            </span>
-          )}
+          <span className="text-[10px] text-slate-500">
+            {maxScore === null ? 'กำหนดคะแนนเต็มก่อน'
+              : bulkTargets.length === 0 ? 'ยังไม่มีนักศึกษาส่งงานนี้'
+              : 'ใส่คะแนนลงในช่องเท่านั้น · กดบันทึกเพื่อบันทึกจริง'}
+          </span>
+
+          <span className="ml-auto flex items-center gap-2">
+            {bulk ? (
+              <span className="inline-flex items-center gap-1.5 text-[11px] text-indigo-700 font-bold">
+                <Save size={11} className="animate-pulse" /> กำลังบันทึก {bulk.done}/{bulk.total}
+              </span>
+            ) : bulkMsg ? (
+              <span className={`text-[11px] font-bold ${bulkMsg.ok ? 'text-emerald-700' : 'text-red-600'}`}>{bulkMsg.text}</span>
+            ) : dirtySubs.length > 0 ? (
+              <span className="text-[11px] font-bold text-indigo-700">ยังไม่ได้บันทึก {dirtySubs.length} รายการ</span>
+            ) : null}
+            {dirtySubs.length > 0 && !bulk && (
+              <button
+                type="button"
+                onClick={discardAll}
+                className="px-3 py-1.5 text-[11px] font-bold text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg transition"
+              >
+                ยกเลิกการแก้ไข
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={saveAll}
+              disabled={!dirtySubs.length || !!bulk}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-[11px] font-bold rounded-lg transition bg-indigo-600 hover:bg-indigo-700 text-white disabled:bg-slate-200 disabled:text-slate-400"
+            >
+              <Save size={12} /> บันทึกทั้งหมด{dirtySubs.length ? ` (${dirtySubs.length})` : ''}
+            </button>
+          </span>
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
@@ -826,7 +909,12 @@ export const GradingSection: React.FC<{
               attempts={r.attempts}
               task={task}
               maxScore={maxScore}
-              onSave={onSaveGrade}
+              draft={r.sub ? drafts[r.sub.submission_id] : undefined}
+              onDraft={d => r.sub && setDraft(r.sub, d)}
+              onSave={() => { if (r.sub) void saveSub(r.sub); }}
+              saving={!!r.sub && savingIds.has(r.sub.submission_id)}
+              error={r.sub ? rowErrors[r.sub.submission_id] ?? '' : ''}
+              savedFlash={!!r.sub && flashIds.has(r.sub.submission_id)}
             />
           ))}
         </div>
