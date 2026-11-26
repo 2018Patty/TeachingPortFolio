@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   ClipboardCheck, ClipboardList, Zap, FileDown, Link as LinkIcon, AlignLeft,
   Save, CheckCircle, Clock, AlertCircle, Download, MessageSquare, Award, History, ChevronDown,
+  ChevronLeft, ChevronRight, Search,
 } from 'lucide-react';
 import {
   Course, Assignment, ActiveLearning, AssignmentSubmission, StudentProfile, StudentCourseVisit,
@@ -19,7 +20,27 @@ interface Task {
   dueDate: string;
   week: number | null;
   kind: 'assignment' | 'activity';
+  createdAt: string;   // when the teacher assigned it
+  order: number;       // 1-based position in assignment order
 }
+
+const createdMs = (iso: string | undefined, id: string) => {
+  const t = iso ? new Date(iso).getTime() : NaN;
+  if (Number.isFinite(t)) return t;
+  const m = /-(\d{12,14})-/.exec(id);   // ids carry a creation timestamp
+  return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER;
+};
+
+const fmtDue = (d: string) =>
+  d ? new Date(`${d.slice(0, 10)}T00:00:00`).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }) : '';
+
+const dueState = (d: string): 'none' | 'past' | 'soon' | 'later' => {
+  if (!/^\d{4}-\d{2}-\d{2}/.test(d)) return 'none';
+  const end = new Date(`${d.slice(0, 10)}T23:59:59`).getTime();
+  const now = Date.now();
+  if (end < now) return 'past';
+  return end - now < 3 * 86400000 ? 'soon' : 'later';
+};
 
 const fileUrls = (raw?: string): string[] => {
   if (!raw) return [];
@@ -301,16 +322,20 @@ export const GradingSection: React.FC<{
   visits: StudentCourseVisit[];
   onSaveGrade: SaveGrade;
 }> = ({ course, assignments, activities, submissions, students, visits, onSaveGrade }) => {
+  // Tasks in the order the teacher assigned them (creation time), numbered 1..n.
   const tasks: Task[] = useMemo(() => [
     ...assignments.map(a => ({
       id: a.assignment_id, title: a.title, dueDate: a.due_date || '',
-      week: a.week_number ?? null, kind: 'assignment' as const,
+      week: a.week_number ?? null, kind: 'assignment' as const, createdAt: a.created_at || '',
+      ms: createdMs(a.created_at, a.assignment_id),
     })),
     ...activities.filter(a => a.is_assignment).map(a => ({
       id: a.activity_id, title: a.title, dueDate: a.due_date || '',
-      week: a.week_number ?? null, kind: 'activity' as const,
+      week: a.week_number ?? null, kind: 'activity' as const, createdAt: a.created_at || '',
+      ms: createdMs(a.created_at, a.activity_id),
     })),
-  ].sort((a, b) => (a.week ?? 999) - (b.week ?? 999) || a.dueDate.localeCompare(b.dueDate)),
+  ].sort((a, b) => a.ms - b.ms || a.dueDate.localeCompare(b.dueDate))
+   .map(({ ms: _ms, ...t }, i) => ({ ...t, order: i + 1 })),
   [assignments, activities]);
 
   const courseSubs = submissions.filter(s => s.course_id === course.course_id);
@@ -329,8 +354,25 @@ export const GradingSection: React.FC<{
       (a.student?.student_id || '').localeCompare(b.student?.student_id || ''));
   }, [courseVisits, courseSubs, students]);
 
+  // Progress of every task (latest attempt per student).
+  const taskStats = useMemo(() => {
+    const m = new Map<string, { submitted: number; pending: number }>();
+    for (const t of tasks) {
+      const subs = latestAttempts(courseSubs.filter(s => s.assignment_id === t.id));
+      m.set(t.id, { submitted: subs.length, pending: subs.filter(s => !isGraded(s.note)).length });
+    }
+    return m;
+  }, [tasks, courseSubs]);
+
   const [taskId, setTaskId] = useState<string | null>(null);
-  const task = tasks.find(t => t.id === taskId) ?? tasks[0];
+  // Default: the earliest-assigned task that still has work to grade.
+  const task = tasks.find(t => t.id === taskId)
+    ?? tasks.find(t => (taskStats.get(t.id)?.pending ?? 0) > 0)
+    ?? tasks[0];
+  const [taskQuery, setTaskQuery] = useState('');
+  const [taskFilter, setTaskFilter] = useState<'all' | 'pending' | 'done'>('all');
+  const [taskSort, setTaskSort] = useState<'assigned' | 'due'>('assigned');
+  const selectTask = (id: string) => { setTaskId(id); setFilter('all'); };
   const [filter, setFilter] = useState<Filter>('all');
   const [groupFilter, setGroupFilter] = useState<'all' | number>('all');
 
@@ -423,51 +465,153 @@ export const GradingSection: React.FC<{
 
   return (
     <div className="space-y-4">
-      {/* Task picker */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
-        <p className="text-xs font-bold text-slate-600 flex items-center gap-1.5">
-          <ClipboardCheck size={13} className="text-indigo-500" /> เลือกงานที่จะตรวจ
-        </p>
-        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-          {tasks.map(t => {
-            const subs = latestAttempts(courseSubs.filter(s => s.assignment_id === t.id));
-            const submitted = subs.length;
-            const pending = subs.filter(s => !isGraded(s.note)).length;
-            const active = t.id === task.id;
-            return (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => { setTaskId(t.id); setFilter('all'); }}
-                className={`text-left rounded-xl border p-3 transition ${
-                  active ? 'border-indigo-400 bg-indigo-50 ring-2 ring-indigo-100' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
-                }`}
+      {/* Task picker: numbered in assignment order, grouped by week */}
+      {(() => {
+        const q = taskQuery.trim().toLowerCase();
+        const shown = tasks
+          .filter(t => !q || t.title.toLowerCase().includes(q) || String(t.order) === q)
+          .filter(t => {
+            const st = taskStats.get(t.id)!;
+            return taskFilter === 'all' ? true
+              : taskFilter === 'pending' ? st.pending > 0
+              : st.submitted > 0 && st.pending === 0;
+          })
+          .sort((a, b) => taskSort === 'assigned' ? a.order - b.order
+            : (a.dueDate || '9999').localeCompare(b.dueDate || '9999') || a.order - b.order);
+        const pendingTasks = tasks.filter(t => (taskStats.get(t.id)?.pending ?? 0) > 0).length;
+        const doneTasks = tasks.filter(t => { const st = taskStats.get(t.id)!; return st.submitted > 0 && st.pending === 0; }).length;
+        // Week headers only in assignment order (in due-date order weeks would repeat).
+        const sections: { week: number | null; items: Task[] }[] = [];
+        for (const t of shown) {
+          const w = taskSort === 'assigned' ? t.week : null;
+          const last = sections[sections.length - 1];
+          if (last && last.week === w) last.items.push(t); else sections.push({ week: w, items: [t] });
+        }
+        const chip = (key: typeof taskFilter, label: string, n: number) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setTaskFilter(key)}
+            className={`px-2.5 py-1 text-[10px] font-bold rounded-lg border transition ${
+              taskFilter === key ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+            }`}
+          >
+            {label} <span className="opacity-70">({n})</span>
+          </button>
+        );
+        return (
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-xs font-bold text-slate-600 flex items-center gap-1.5 mr-auto">
+                <ClipboardCheck size={13} className="text-indigo-500" /> เลือกงานที่จะตรวจ
+                <span className="font-normal text-slate-400">· {tasks.length} งาน</span>
+              </p>
+              <div className="relative">
+                <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  value={taskQuery}
+                  onChange={e => setTaskQuery(e.target.value)}
+                  placeholder="ค้นหาชื่องาน หรือเลขลำดับ"
+                  className="w-52 pl-7 pr-2 py-1.5 text-[11px] border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                />
+              </div>
+              <select
+                aria-label="เรียงงาน"
+                value={taskSort}
+                onChange={e => setTaskSort(e.target.value as typeof taskSort)}
+                className="px-2 py-1.5 text-[11px] font-bold text-slate-600 border border-slate-200 rounded-lg bg-white"
               >
-                <div className="flex items-center gap-1.5 mb-1 flex-wrap">
-                  {t.kind === 'activity' ? (
-                    <span className="inline-flex items-center gap-1 text-[9px] font-bold text-green-700 bg-green-100 px-1.5 py-0.5 rounded"><Zap size={8} /> Active Learning</span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 text-[9px] font-bold text-rose-700 bg-rose-100 px-1.5 py-0.5 rounded"><ClipboardList size={8} /> งานมอบหมาย</span>
+                <option value="assigned">เรียงตามลำดับการสั่งงาน</option>
+                <option value="due">เรียงตามกำหนดส่ง</option>
+              </select>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {chip('all', 'ทุกงาน', tasks.length)}
+              {chip('pending', 'มีงานรอตรวจ', pendingTasks)}
+              {chip('done', 'ตรวจครบแล้ว', doneTasks)}
+            </div>
+
+            <div className="max-h-[360px] overflow-y-auto -mx-1 px-1 space-y-3">
+              {shown.length === 0 && (
+                <p className="text-[11px] text-slate-400 italic text-center py-6">ไม่พบงานตามเงื่อนไขนี้</p>
+              )}
+              {sections.map((sec, si) => (
+                <div key={si} className="space-y-1.5">
+                  {taskSort === 'assigned' && (
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-wide pt-1">
+                      {sec.week !== null ? `สัปดาห์ที่ ${sec.week}` : 'ไม่ระบุสัปดาห์'}
+                    </p>
                   )}
-                  {t.week !== null && <span className="text-[9px] font-semibold text-slate-500">สัปดาห์ที่ {t.week}</span>}
+                  {sec.items.map(t => {
+                    const st = taskStats.get(t.id)!;
+                    const active = t.id === task.id;
+                    const pct = roster.length ? Math.round((st.submitted / roster.length) * 100) : 0;
+                    const due = dueState(t.dueDate);
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => selectTask(t.id)}
+                        className={`w-full text-left flex items-center gap-3 rounded-xl border px-3 py-2.5 transition ${
+                          active ? 'border-indigo-400 bg-indigo-50 ring-2 ring-indigo-100' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span className={`shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-[11px] font-black ${
+                          active ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'
+                        }`} title={`งานที่ ${t.order} (ตามลำดับการสั่งงาน)`}>
+                          {t.order}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-center gap-1.5 flex-wrap">
+                            {t.kind === 'activity' ? (
+                              <span className="inline-flex items-center gap-1 text-[9px] font-bold text-green-700 bg-green-100 px-1.5 py-0.5 rounded"><Zap size={8} /> Active Learning</span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-[9px] font-bold text-rose-700 bg-rose-100 px-1.5 py-0.5 rounded"><ClipboardList size={8} /> งานมอบหมาย</span>
+                            )}
+                            <span className="text-xs font-bold text-slate-800 truncate">{t.title}</span>
+                          </span>
+                          <span className="flex items-center gap-2 mt-1">
+                            <span className="h-1.5 w-24 rounded-full bg-slate-100 overflow-hidden shrink-0">
+                              <span className="block h-full bg-emerald-500" style={{ width: `${pct}%` }} />
+                            </span>
+                            <span className="text-[10px] text-slate-500">ส่ง {st.submitted}/{roster.length}</span>
+                            {t.dueDate && (
+                              <span className={`text-[10px] ${due === 'past' ? 'text-slate-400' : due === 'soon' ? 'text-red-600 font-bold' : 'text-slate-500'}`}>
+                                · กำหนดส่ง {fmtDue(t.dueDate)}{due === 'past' ? ' (เลยกำหนด)' : due === 'soon' ? ' (ใกล้ถึง)' : ''}
+                              </span>
+                            )}
+                          </span>
+                        </span>
+                        <span className="shrink-0 text-right">
+                          {st.pending > 0 ? (
+                            <span className="inline-block text-[10px] font-bold text-amber-800 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full">รอตรวจ {st.pending}</span>
+                          ) : st.submitted > 0 ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700"><CheckCircle size={11} /> ตรวจครบ</span>
+                          ) : (
+                            <span className="text-[10px] text-slate-400">ยังไม่มีคนส่ง</span>
+                          )}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
-                <p className="text-xs font-bold text-slate-800 line-clamp-2">{t.title}</p>
-                <div className="flex items-center gap-2 mt-1.5 text-[10px] text-slate-500 flex-wrap">
-                  <span>ส่งแล้ว {submitted}/{roster.length}</span>
-                  {pending > 0
-                    ? <span className="font-bold text-amber-700">รอตรวจ {pending}</span>
-                    : submitted > 0 && <span className="font-bold text-emerald-700">ตรวจครบ</span>}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Selected task */}
       <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-[10px] font-black text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full">
+                งานที่ {task.order} / {tasks.length}
+              </span>
+              {task.week !== null && <span className="text-[10px] font-semibold text-slate-500">สัปดาห์ที่ {task.week}</span>}
+              {task.createdAt && <span className="text-[10px] text-slate-400">สั่งงานเมื่อ {fmtTime(task.createdAt)}</span>}
+            </div>
             <h3 className="text-sm font-black text-slate-900">{task.title}</h3>
             <p className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-3 flex-wrap">
               {task.dueDate && <span className="flex items-center gap-1"><Clock size={10} /> กำหนดส่ง {task.dueDate}</span>}
@@ -476,6 +620,26 @@ export const GradingSection: React.FC<{
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center rounded-lg border border-slate-200 overflow-hidden">
+              <button
+                type="button"
+                disabled={task.order <= 1}
+                onClick={() => selectTask(tasks[task.order - 2].id)}
+                title="งานก่อนหน้า"
+                className="px-2 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-30 inline-flex items-center gap-0.5"
+              >
+                <ChevronLeft size={12} /> ก่อนหน้า
+              </button>
+              <button
+                type="button"
+                disabled={task.order >= tasks.length}
+                onClick={() => selectTask(tasks[task.order].id)}
+                title="งานถัดไป"
+                className="px-2 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-30 border-l border-slate-200 inline-flex items-center gap-0.5"
+              >
+                ถัดไป <ChevronRight size={12} />
+              </button>
+            </div>
             <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600">
               คะแนนเต็ม
               <input

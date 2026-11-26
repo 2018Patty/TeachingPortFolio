@@ -4,7 +4,7 @@ import {
   MessageSquare, ClipboardList, ChevronDown, ChevronRight,
   Eye, Edit3, ExternalLink, Clock, CheckCircle, TrendingUp,
   GraduationCap, CalendarDays, ArrowRight, Plus, X, Link as LinkIcon,
-  FileDown, AlignLeft, ClipboardCheck, Shield, Save, RefreshCw, Trash2, Calendar, UserPlus, Pencil,
+  FileDown, AlignLeft, ClipboardCheck, Shield, Save, RefreshCw, Trash2, Calendar, UserPlus, Pencil, Download,
 } from 'lucide-react';
 import {
   Course, Material, Assignment, Question, Reply, ActiveLearning,
@@ -614,6 +614,54 @@ const StudentsSection: React.FC<{
     </>
   );
 
+  // Score table → CSV (rows shown under the current group filter).
+  // Cell = score; "ส่งแล้ว" when submitted but not scored yet; blank when not submitted.
+  const exportScoresCsv = () => {
+    const esc = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
+    const header = [
+      'ลำดับ', 'รหัสนักศึกษา', 'ชื่อ-สกุล', 'อีเมล', 'กลุ่ม',
+      ...assignments.map(t => {
+        const m = maxOf(t.assignment_id);
+        return m !== null ? `${t.title} (เต็ม ${m})` : t.title;
+      }),
+      'จำนวนงานที่ส่ง', 'คะแนนรวม', 'คะแนนเต็มรวม',
+    ];
+    const lines = [header.map(esc).join(',')];
+    visibleRows.forEach((r, i) => {
+      let total = 0, totalMax = 0, scored = 0, submitted = 0;
+      const cells = assignments.map(t => {
+        const sub = r.studentSubmissions.find(x => x.assignment_id === t.assignment_id);
+        if (!sub) return '';
+        submitted++;
+        const g = parseGrade(sub.note);
+        if (g && g.score !== null) {
+          total += g.score; scored++;
+          if (g.max_score !== null) totalMax += g.max_score;
+          return g.score;
+        }
+        return 'ส่งแล้ว';
+      });
+      lines.push([
+        i + 1,
+        r.student?.student_id || '',
+        r.student ? `${r.student.first_name} ${r.student.last_name}`.trim() : '',
+        r.student?.email || '',
+        r.group ?? '',
+        ...cells,
+        submitted,
+        scored > 0 ? +total.toFixed(2) : '',
+        scored > 0 && totalMax > 0 ? +totalMax.toFixed(2) : '',
+      ].map(esc).join(','));
+    });
+    const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const groupPart = groupFilter === 'all' ? '' : groupFilter === 'none' ? '_ไม่ระบุกลุ่ม' : `_กลุ่ม${groupFilter}`;
+    a.download = `ตารางคะแนน_${course.course_code}${groupPart}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+
   const addButton = (
     <button
       onClick={() => setFormMode({ type: 'add' })}
@@ -660,7 +708,17 @@ const StudentsSection: React.FC<{
             <Users size={14} className="text-slate-500" />
             <span className="text-xs font-bold text-slate-700">รายชื่อนักศึกษา</span>
             <span className="text-[10px] text-slate-400 ml-1 hidden md:inline">— คลิกชื่อเพื่อดูรายละเอียด · คลิกคะแนนเพื่อดูงานที่ส่ง · <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500 align-middle" /> = ส่งช้า</span>
-            <span className="ml-auto">{addButton}</span>
+            <span className="ml-auto flex items-center gap-2">
+              <button
+                onClick={exportScoresCsv}
+                disabled={visibleRows.length === 0}
+                title="ส่งออกตารางคะแนนตามกลุ่มที่เลือกอยู่"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-[11px] font-bold transition disabled:opacity-40"
+              >
+                <Download size={13} /> ส่งออกคะแนน (CSV)
+              </button>
+              {addButton}
+            </span>
           </div>
           {groupError && <div className="px-5 py-2 text-[11px] text-red-600 font-medium bg-red-50 border-b border-red-100">{groupError}</div>}
           {/* Group filter + codes */}
