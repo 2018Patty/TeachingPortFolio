@@ -322,7 +322,7 @@ export const GradingSection: React.FC<{
   visits: StudentCourseVisit[];
   onSaveGrade: SaveGrade;
 }> = ({ course, assignments, activities, submissions, students, visits, onSaveGrade }) => {
-  // Tasks in the order the teacher assigned them (creation time), numbered 1..n.
+  // Tasks by week, then in the order the teacher assigned them; numbered 1..n.
   const tasks: Task[] = useMemo(() => [
     ...assignments.map(a => ({
       id: a.assignment_id, title: a.title, dueDate: a.due_date || '',
@@ -334,7 +334,7 @@ export const GradingSection: React.FC<{
       week: a.week_number ?? null, kind: 'activity' as const, createdAt: a.created_at || '',
       ms: createdMs(a.created_at, a.activity_id),
     })),
-  ].sort((a, b) => a.ms - b.ms || a.dueDate.localeCompare(b.dueDate))
+  ].sort((a, b) => (a.week ?? 999) - (b.week ?? 999) || a.ms - b.ms || a.dueDate.localeCompare(b.dueDate))
    .map(({ ms: _ms, ...t }, i) => ({ ...t, order: i + 1 })),
   [assignments, activities]);
 
@@ -372,6 +372,8 @@ export const GradingSection: React.FC<{
   const [taskQuery, setTaskQuery] = useState('');
   const [taskFilter, setTaskFilter] = useState<'all' | 'pending' | 'done'>('all');
   const [taskSort, setTaskSort] = useState<'assigned' | 'due'>('assigned');
+  // Expanded / collapsed week groups (key = week number or 'none'); unset = default.
+  const [weekOpen, setWeekOpen] = useState<Record<string, boolean>>({});
   const selectTask = (id: string) => { setTaskId(id); setFilter('all'); };
   const [filter, setFilter] = useState<Filter>('all');
   const [groupFilter, setGroupFilter] = useState<'all' | number>('all');
@@ -476,17 +478,22 @@ export const GradingSection: React.FC<{
               : taskFilter === 'pending' ? st.pending > 0
               : st.submitted > 0 && st.pending === 0;
           })
-          .sort((a, b) => taskSort === 'assigned' ? a.order - b.order
-            : (a.dueDate || '9999').localeCompare(b.dueDate || '9999') || a.order - b.order);
+          .sort((a, b) => (a.week ?? 999) - (b.week ?? 999) || (taskSort === 'assigned' ? a.order - b.order
+            : (a.dueDate || '9999').localeCompare(b.dueDate || '9999') || a.order - b.order));
         const pendingTasks = tasks.filter(t => (taskStats.get(t.id)?.pending ?? 0) > 0).length;
         const doneTasks = tasks.filter(t => { const st = taskStats.get(t.id)!; return st.submitted > 0 && st.pending === 0; }).length;
-        // Week headers only in assignment order (in due-date order weeks would repeat).
-        const sections: { week: number | null; items: Task[] }[] = [];
+        // One collapsible group per week, in week order.
+        const sections: { week: number | null; key: string; items: Task[] }[] = [];
         for (const t of shown) {
-          const w = taskSort === 'assigned' ? t.week : null;
           const last = sections[sections.length - 1];
-          if (last && last.week === w) last.items.push(t); else sections.push({ week: w, items: [t] });
+          if (last && last.week === t.week) last.items.push(t);
+          else sections.push({ week: t.week, key: t.week === null ? 'none' : String(t.week), items: [t] });
         }
+        // Searching opens every group; otherwise the selected task's week starts open.
+        const isOpen = (sec: typeof sections[number]) =>
+          q ? true : weekOpen[sec.key] ?? sec.items.some(t => t.id === task.id);
+        const setAll = (open: boolean) =>
+          setWeekOpen(Object.fromEntries(sections.map(sec => [sec.key, open])));
         const chip = (key: typeof taskFilter, label: string, n: number) => (
           <button
             key={key}
@@ -521,27 +528,59 @@ export const GradingSection: React.FC<{
                 onChange={e => setTaskSort(e.target.value as typeof taskSort)}
                 className="px-2 py-1.5 text-[11px] font-bold text-slate-600 border border-slate-200 rounded-lg bg-white"
               >
-                <option value="assigned">เรียงตามลำดับการสั่งงาน</option>
-                <option value="due">เรียงตามกำหนดส่ง</option>
+                <option value="assigned">ในสัปดาห์: เรียงตามลำดับการสั่งงาน</option>
+                <option value="due">ในสัปดาห์: เรียงตามกำหนดส่ง</option>
               </select>
             </div>
             <div className="flex flex-wrap gap-1.5">
               {chip('all', 'ทุกงาน', tasks.length)}
               {chip('pending', 'มีงานรอตรวจ', pendingTasks)}
               {chip('done', 'ตรวจครบแล้ว', doneTasks)}
+              {sections.length > 1 && !q && (
+                <span className="ml-auto flex items-center gap-1">
+                  <button type="button" onClick={() => setAll(true)}
+                    className="px-2 py-1 text-[10px] font-bold text-indigo-700 hover:bg-indigo-50 rounded-lg">ขยายทุกสัปดาห์</button>
+                  <button type="button" onClick={() => setAll(false)}
+                    className="px-2 py-1 text-[10px] font-bold text-slate-500 hover:bg-slate-100 rounded-lg">ยุบทุกสัปดาห์</button>
+                </span>
+              )}
             </div>
 
-            <div className="max-h-[360px] overflow-y-auto -mx-1 px-1 space-y-3">
+            <div className="max-h-[440px] overflow-y-auto -mx-1 px-1 space-y-2">
               {shown.length === 0 && (
                 <p className="text-[11px] text-slate-400 italic text-center py-6">ไม่พบงานตามเงื่อนไขนี้</p>
               )}
-              {sections.map((sec, si) => (
-                <div key={si} className="space-y-1.5">
-                  {taskSort === 'assigned' && (
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-wide pt-1">
+              {sections.map(sec => {
+                const open = isOpen(sec);
+                const secPending = sec.items.reduce((n, t) => n + (taskStats.get(t.id)?.pending ?? 0), 0);
+                const secDone = sec.items.every(t => { const st = taskStats.get(t.id)!; return st.submitted > 0 && st.pending === 0; });
+                const hasSelected = sec.items.some(t => t.id === task.id);
+                return (
+                <div key={sec.key} className="rounded-xl border border-slate-200 overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setWeekOpen(w => ({ ...w, [sec.key]: !open }))}
+                    aria-expanded={open}
+                    className={`w-full flex items-center gap-2 px-3 py-2 text-left transition ${open ? 'bg-slate-50' : 'bg-white hover:bg-slate-50'}`}
+                  >
+                    <ChevronRight size={13} className={`text-slate-400 transition-transform ${open ? 'rotate-90' : ''}`} />
+                    <span className="text-xs font-black text-slate-700">
                       {sec.week !== null ? `สัปดาห์ที่ ${sec.week}` : 'ไม่ระบุสัปดาห์'}
-                    </p>
-                  )}
+                    </span>
+                    <span className="text-[10px] text-slate-400">
+                      {sec.items.length} งาน · ลำดับที่ {sec.items[0].order}{sec.items.length > 1 ? `–${sec.items[sec.items.length - 1].order}` : ''}
+                    </span>
+                    {hasSelected && !open && <span className="text-[10px] font-bold text-indigo-600">· กำลังตรวจงานในสัปดาห์นี้</span>}
+                    <span className="ml-auto">
+                      {secPending > 0 ? (
+                        <span className="text-[10px] font-bold text-amber-800 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full">รอตรวจ {secPending}</span>
+                      ) : secDone ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700"><CheckCircle size={11} /> ตรวจครบ</span>
+                      ) : null}
+                    </span>
+                  </button>
+                  {open && (
+                  <div className="p-1.5 space-y-1.5 border-t border-slate-100">
                   {sec.items.map(t => {
                     const st = taskStats.get(t.id)!;
                     const active = t.id === task.id;
@@ -594,8 +633,11 @@ export const GradingSection: React.FC<{
                       </button>
                     );
                   })}
+                  </div>
+                  )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         );
