@@ -211,6 +211,7 @@ export default function App() {
   const [showReflectionModal, setShowReflectionModal] = useState(false);
   const [editingReflection, setEditingReflection] = useState<TeachingReflection | null>(null);
   const [reflectionForm, setReflectionForm] = useState({ week_number: 1, content: '', image_url: '' });
+  const [reflectionImageUploading, setReflectionImageUploading] = useState(false);
 
   // Q&A state
   const [questions, setQuestions] = useState<Question[]>([]);
@@ -232,14 +233,13 @@ export default function App() {
 
   // 5. Initialize lists and sync with URL Parameters
   const loadAllData = async () => {
-    const [coursesRes, materialsRes, assignmentsRes, questionsRes, repliesRes, activitiesRes, reflectionsRes, profileRes, visitsRes, submissionsRes, studentsRes] = await Promise.all([
+    const [coursesRes, materialsRes, assignmentsRes, questionsRes, repliesRes, activitiesRes, profileRes, visitsRes, submissionsRes, studentsRes] = await Promise.all([
       supabase.from('courses').select('*').order('year', { ascending: false }),
       supabase.from('materials').select('*'),
       supabase.from('assignments').select('*'),
       supabase.from('questions').select('*').order('created_at', { ascending: true }),
       supabase.from('replies').select('*').order('created_at', { ascending: true }),
       supabase.from('active_learning').select('*').order('created_at', { ascending: true }),
-      supabase.from('teaching_reflections').select('*').order('week_number', { ascending: true }),
       supabase.from('site_settings').select('*').eq('id', 1).maybeSingle(),
       supabase.from('student_course_visits').select('*').order('visited_at', { ascending: false }),
       supabase.from('assignment_submissions').select('*').order('submitted_at', { ascending: false }),
@@ -270,9 +270,6 @@ export default function App() {
     }
     if (!activitiesRes.error && activitiesRes.data) {
       setActivities(activitiesRes.data as ActiveLearning[]);
-    }
-    if (!reflectionsRes.error && reflectionsRes.data) {
-      setReflections(reflectionsRes.data as TeachingReflection[]);
     }
     if (!profileRes.error && profileRes.data) {
       const p = profileRes.data as SiteProfile;
@@ -450,6 +447,40 @@ export default function App() {
     roleRef.current = role;
   }, [role]);
 
+  // Teaching reflections are teacher-only and may contain large images, so they are
+  // loaded only after the teacher logs in (not for every student on every page load).
+  useEffect(() => {
+    if (role !== 'admin') return;
+    supabase.from('teaching_reflections').select('*').order('week_number', { ascending: true })
+      .then(({ data, error }) => {
+        if (!error && data) setReflections(data as TeachingReflection[]);
+      });
+  }, [role]);
+
+  // ── Student login progress (after returning from Google) ──────────────────
+  // 'pending': back from the OAuth redirect, session not applied yet.
+  const [authStatus, setAuthStatus] = useState<'idle' | 'pending' | 'error'>(() => {
+    const h = window.location.hash, q = window.location.search;
+    if (/error_description=/.test(h) || /error_description=/.test(q)) return 'error';
+    return /access_token=/.test(h) || /[?&]code=/.test(q) ? 'pending' : 'idle';
+  });
+  const [authError, setAuthError] = useState(() => {
+    const raw = new URLSearchParams(window.location.hash.slice(1)).get('error_description')
+      || new URLSearchParams(window.location.search).get('error_description');
+    return raw ? raw.replace(/\+/g, ' ') : '';
+  });
+  useEffect(() => {
+    if (role === 'student' && authStatus !== 'idle') { setAuthStatus('idle'); setAuthError(''); }
+  }, [role, authStatus]);
+  useEffect(() => {
+    if (authStatus !== 'pending') return;
+    const t = setTimeout(() => {
+      setAuthStatus(s => (s === 'pending' ? 'error' : s));
+      setAuthError(e => e || 'timeout');
+    }, 25000);
+    return () => clearTimeout(t);
+  }, [authStatus]);
+
   // Student login → jump to the latest semester (handled in the courses effect below)
   const [latestTermRequest, setLatestTermRequest] = useState(0);
   const studentLatestTermAppliedRef = useRef(false);
@@ -580,9 +611,12 @@ export default function App() {
 
     // Explicit session check: catches OAuth redirect sessions where
     // onAuthStateChange INITIAL_SESSION might fire before tokens are processed.
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
       if (session?.user && roleRef.current !== 'admin') {
         applyStudentSession(session.user);
+      } else if (mounted) {
+        setAuthStatus(s => (s === 'pending' ? 'error' : s));
+        if (error) setAuthError(e => e || error.message);
       }
     });
 
@@ -4102,6 +4136,49 @@ export default function App() {
         </div>
       )}
 
+      {/* Student login progress / failure after returning from Google */}
+      {authStatus !== 'idle' && role !== 'admin' && (
+        <div className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-sm rounded-3xl border border-slate-200 shadow-xl p-6 text-center space-y-3">
+            {authStatus === 'pending' ? (
+              <>
+                <Loader2 size={28} className="mx-auto text-indigo-500 animate-spin" />
+                <p className="text-sm font-bold text-slate-800">กำลังเข้าสู่ระบบ...</p>
+                <p className="text-[11px] text-slate-500">หากมีผู้เข้าใช้งานพร้อมกันจำนวนมาก อาจใช้เวลาสักครู่ กรุณาอย่าปิดหน้านี้</p>
+              </>
+            ) : (
+              <>
+                <AlertCircle size={28} className="mx-auto text-red-500" />
+                <p className="text-sm font-bold text-slate-800">เข้าสู่ระบบไม่สำเร็จ</p>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  {authError === 'timeout'
+                    ? 'ระบบตอบสนองช้า อาจมีผู้เข้าใช้งานพร้อมกันจำนวนมาก กรุณารอประมาณ 1 นาทีแล้วลองใหม่'
+                    : /rate limit|too many/i.test(authError)
+                      ? 'มีการเข้าสู่ระบบจากเครือข่ายเดียวกันพร้อมกันจำนวนมาก กรุณารอสักครู่แล้วลองใหม่'
+                      : `กรุณาลองใหม่อีกครั้ง${authError ? ` (${authError})` : ''}`}
+                </p>
+                <div className="flex justify-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => { window.history.replaceState(null, '', window.location.pathname); setAuthStatus('idle'); setAuthError(''); }}
+                    className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-xl transition"
+                  >
+                    ปิด
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { window.history.replaceState(null, '', window.location.pathname); window.location.reload(); }}
+                    className="px-4 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition"
+                  >
+                    ลองใหม่
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Teaching Reflection Modal */}
       {showReflectionModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
@@ -4159,8 +4236,10 @@ export default function App() {
                   </div>
                 ) : (
                   <label className="flex items-center justify-center gap-2 w-full border-2 border-dashed border-purple-200 hover:border-purple-400 rounded-xl py-6 cursor-pointer transition-colors bg-purple-50/30 hover:bg-purple-50">
-                    <ImageIcon size={18} className="text-purple-300" />
-                    <span className="text-xs text-slate-500">คลิกเพื่อเลือกรูปภาพ</span>
+                    {reflectionImageUploading
+                      ? <Loader2 size={18} className="text-purple-400 animate-spin" />
+                      : <ImageIcon size={18} className="text-purple-300" />}
+                    <span className="text-xs text-slate-500">{reflectionImageUploading ? 'กำลังอัปโหลดรูป...' : 'คลิกเพื่อเลือกรูปภาพ'}</span>
                     <input
                       type="file"
                       accept="image/*"
@@ -4169,10 +4248,19 @@ export default function App() {
                         const file = e.target.files?.[0];
                         if (!file) return;
                         if (file.size > 5 * 1024 * 1024) { alert('ไฟล์รูปต้องไม่เกิน 5 MB'); return; }
-                        const reader = new FileReader();
-                        reader.onload = () => setReflectionForm(f => ({ ...f, image_url: reader.result as string }));
-                        reader.readAsDataURL(file);
                         e.target.value = '';
+                        // Store the image in Storage and keep only its URL in the row —
+                        // base64 images in the table made every page load several MB.
+                        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+                        const path = `reflections/${selectedCourseId || 'general'}/${Date.now()}_${safeName}`;
+                        setReflectionImageUploading(true);
+                        supabase.storage.from('course-materials').upload(path, file, { upsert: false })
+                          .then(({ error }) => {
+                            if (error) { alert(`อัปโหลดรูปไม่สำเร็จ: ${error.message}`); return; }
+                            const { data } = supabase.storage.from('course-materials').getPublicUrl(path);
+                            setReflectionForm(f => ({ ...f, image_url: data.publicUrl }));
+                          })
+                          .finally(() => setReflectionImageUploading(false));
                       }}
                     />
                   </label>
