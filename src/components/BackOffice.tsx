@@ -16,9 +16,10 @@ import { PDPAPrivacyModal } from './PDPAPrivacyModal';
 import { StudentLoginLog } from './StudentLoginLog';
 import { groupFromVisitId, groupCount, parseGroupCodes, isAddedByTeacher } from '../utils/enrollGroups';
 import { TeachingPlanTab } from './TeachingPlanTab';
-import { GradingSection, SubmissionContent, GradeFeedback, type SaveGrade } from './GradingSection';
+import { GradingSection, SubmissionContent, GradeEditor, taskMaxScore, type SaveGrade } from './GradingSection';
 import { SubmissionLog } from './MySubmission';
 import { isActivityAnchorId } from '../utils/assignmentLinks';
+import { compareStudents } from '../utils/studentOrder';
 import { latestAttempts, attemptsOf, parseGrade, isGraded, formatScore, isLateSubmission } from '../utils/grading';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -104,8 +105,10 @@ const StudentDetailModal: React.FC<{
   submissions: AssignmentSubmission[];
   assignments: Assignment[];
   focusId?: string;   // assignment to open and scroll to (clicked score cell)
+  courseSubmissions: AssignmentSubmission[];   // whole course, to know each task's full score
+  onSaveGrade: SaveGrade;
   onClose: () => void;
-}> = ({ studentId, student, visits, submissions, assignments, focusId, onClose }) => {
+}> = ({ studentId, student, visits, submissions, assignments, focusId, courseSubmissions, onSaveGrade, onClose }) => {
   const [expandedId, setExpandedId] = useState<string | null>(focusId ?? null);
   useEffect(() => {
     if (!focusId) return;
@@ -236,7 +239,11 @@ const StudentDetailModal: React.FC<{
                       <p className="text-[10px] font-bold text-indigo-700">งานล่าสุด (ส่งครั้งที่ {attempts.length})</p>
                     )}
                     <SubmissionContent sub={sub} />
-                    <GradeFeedback note={sub.note} />
+                    <GradeEditor
+                      sub={sub}
+                      defaultMax={taskMaxScore(courseSubmissions, assign.assignment_id)}
+                      onSave={onSaveGrade}
+                    />
                     {attempts.length > 1 && (
                       <div className="pt-1 space-y-2">
                         <p className="text-[10px] font-bold text-slate-500">ประวัติการส่งครั้งก่อน</p>
@@ -533,7 +540,7 @@ const StudentsSection: React.FC<{
       .map(v => groupFromVisitId(v.visit_id))
       .find((g): g is number => g !== null) ?? null;
     return { sid, student, visitCount, submissionCount: studentSubmissions.length, studentSubmissions, lastVisit, group, addedByTeacher };
-  }).sort((a, b) => (a.group ?? 999) - (b.group ?? 999));
+  }).sort((a, b) => compareStudents(a.student, b.student));
 
   // Full score of each task, taken from its graded submissions.
   const maxOf = (taskId: string): number | null => {
@@ -574,7 +581,7 @@ const StudentsSection: React.FC<{
   // Add / edit / delete modals
   const [formMode, setFormMode] = useState<null | { type: 'add' } | { type: 'edit'; sid: string }>(null);
   const [deleteSid, setDeleteSid] = useState<string | null>(null);
-  const notInCourse = students.filter(s => !studentIds.includes(s.id));
+  const notInCourse = students.filter(s => !studentIds.includes(s.id)).sort(compareStudents);
   const editingRow = formMode?.type === 'edit' ? rows.find(r => r.sid === formMode.sid) : undefined;
   const deletingRow = deleteSid ? rows.find(r => r.sid === deleteSid) : undefined;
 
@@ -1959,6 +1966,8 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
         submissions={modalSubmissions}
         assignments={modalAssignments}
         focusId={detailStudent.focusId}
+        courseSubmissions={submissions.filter(s => s.course_id === detailStudent.courseId)}
+        onSaveGrade={onSaveGrade}
         onClose={() => setDetailStudent(null)}
       />
     )}

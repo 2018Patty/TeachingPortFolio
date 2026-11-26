@@ -8,6 +8,7 @@ import {
   Course, Assignment, ActiveLearning, AssignmentSubmission, StudentProfile, StudentCourseVisit,
 } from '../types';
 import { groupFromVisitId } from '../utils/enrollGroups';
+import { compareStudents } from '../utils/studentOrder';
 import {
   parseGrade, isGraded, formatScore, isLateSubmission, legacyNote, latestAttempts, type SubmissionGrade,
 } from '../utils/grading';
@@ -151,6 +152,133 @@ const draftToGrade = (d: Draft, maxScore: number | null): { grade: SubmissionGra
   }
   if (score === null && !d.feedback.trim()) return { grade: null };
   return { grade: { score, max_score: maxScore, feedback: d.feedback.trim(), graded_at: new Date().toISOString() } };
+};
+
+/** Full score of a task, from its graded submissions (most common max_score). */
+export const taskMaxScore = (subs: AssignmentSubmission[], taskId: string): number | null => {
+  const counts = new Map<number, number>();
+  for (const s of subs) {
+    if (s.assignment_id !== taskId) continue;
+    const m = parseGrade(s.note)?.max_score;
+    if (m != null) counts.set(m, (counts.get(m) || 0) + 1);
+  }
+  return Array.from(counts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+};
+
+/** Stand-alone score + feedback form for one submission (used in the student popup). */
+export const GradeEditor: React.FC<{
+  sub: AssignmentSubmission;
+  defaultMax: number | null;   // the task's full score, if known
+  onSave: SaveGrade;
+}> = ({ sub, defaultMax, onSave }) => {
+  const grade = parseGrade(sub.note);
+  const stored = storedDraft(sub);
+  const [draft, setDraft] = useState<Draft>(stored);
+  const [maxText, setMaxText] = useState(String(grade?.max_score ?? defaultMax ?? 10));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
+
+  // After saving (or when the submission changes) start again from what is stored.
+  useEffect(() => {
+    setDraft(storedDraft(sub));
+    setMaxText(String(parseGrade(sub.note)?.max_score ?? defaultMax ?? 10));
+    setError('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sub.submission_id, sub.note]);
+
+  const maxNum = Number(maxText);
+  const maxScore = maxText.trim() !== '' && Number.isFinite(maxNum) && maxNum > 0 ? maxNum : null;
+  const maxChanged = maxScore !== (grade?.max_score ?? null) && !!grade && grade.score !== null;
+  const dirty = !sameDraft(draft, stored) || maxChanged;
+  const isFull = maxScore !== null && draft.score.trim() !== '' && Number(draft.score) === maxScore;
+
+  const save = async () => {
+    const r = draftToGrade(draft, maxScore);
+    if ('error' in r) { setError(r.error); return; }
+    setSaving(true); setError('');
+    try {
+      await onSave(sub.submission_id, r.grade);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      setError(`บันทึกไม่สำเร็จ: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className={`rounded-xl border p-3 space-y-2 ${dirty ? 'border-indigo-300 bg-indigo-50/40' : 'border-slate-200 bg-white'}`}>
+      <p className="text-[10px] font-bold text-slate-500 flex items-center gap-1"><Award size={11} /> ให้คะแนนและ feedback</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="text-[11px] font-bold text-slate-600" htmlFor={`ge-score-${sub.submission_id}`}>คะแนน</label>
+        <input
+          id={`ge-score-${sub.submission_id}`}
+          type="number" inputMode="decimal" min={0} max={maxScore ?? undefined} step="any"
+          value={draft.score}
+          onChange={e => { setDraft(d => ({ ...d, score: e.target.value })); setError(''); }}
+          placeholder="-"
+          className="w-20 px-2.5 py-1.5 text-xs font-bold text-slate-800 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200"
+        />
+        <span className="text-[11px] text-slate-500">/</span>
+        <input
+          aria-label="คะแนนเต็ม"
+          type="number" min={1} step="any"
+          value={maxText}
+          onChange={e => setMaxText(e.target.value)}
+          title="คะแนนเต็ม"
+          className="w-16 px-2 py-1.5 text-xs text-slate-600 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200"
+        />
+        {maxScore !== null && (
+          <label className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={isFull}
+              onChange={e => setDraft(d => ({
+                ...d,
+                score: e.target.checked ? String(maxScore)
+                  : (stored.score.trim() !== '' && Number(stored.score) !== maxScore ? stored.score : ''),
+              }))}
+              className="w-3.5 h-3.5 accent-emerald-600"
+            />
+            คะแนนเต็ม
+          </label>
+        )}
+      </div>
+      <textarea
+        aria-label="Feedback"
+        value={draft.feedback}
+        onChange={e => setDraft(d => ({ ...d, feedback: e.target.value }))}
+        rows={3}
+        placeholder="Feedback ถึงนักศึกษา (นักศึกษาจะเห็นข้อความนี้)"
+        className="w-full px-3 py-2 text-xs text-slate-700 border border-slate-200 rounded-xl resize-y focus:outline-none focus:ring-2 focus:ring-indigo-200"
+      />
+      <div className="flex items-center justify-end gap-2">
+        {error && <span className="text-[10px] text-red-600 mr-auto">{error}</span>}
+        {!error && dirty && <span className="text-[10px] font-bold text-indigo-600 mr-auto">ยังไม่ได้บันทึก</span>}
+        {saved && !dirty && <span className="text-[10px] font-bold text-emerald-600">บันทึกแล้ว</span>}
+        {grade?.graded_at && !dirty && !saved && <span className="text-[10px] text-slate-400">ตรวจเมื่อ {fmtTime(grade.graded_at)}</span>}
+        {dirty && (
+          <button
+            type="button"
+            onClick={() => { setDraft(stored); setMaxText(String(grade?.max_score ?? defaultMax ?? 10)); setError(''); }}
+            className="px-3 py-1.5 text-[11px] font-bold text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg"
+          >
+            ยกเลิก
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={save}
+          disabled={saving || !dirty}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold rounded-lg transition bg-indigo-600 hover:bg-indigo-700 text-white disabled:bg-slate-200 disabled:text-slate-400"
+        >
+          <Save size={11} /> {saving ? 'กำลังบันทึก...' : 'บันทึก'}
+        </button>
+      </div>
+    </div>
+  );
 };
 
 const GradeRow: React.FC<{
@@ -354,9 +482,7 @@ export const GradingSection: React.FC<{
       student: students.find(s => s.id === sid),
       group: courseVisits.filter(v => v.student_id === sid)
         .map(v => groupFromVisitId(v.visit_id)).find((g): g is number => g !== null) ?? null,
-    })).sort((a, b) =>
-      (a.group ?? 999) - (b.group ?? 999) ||
-      (a.student?.student_id || '').localeCompare(b.student?.student_id || ''));
+    })).sort((a, b) => compareStudents(a.student, b.student));
   }, [courseVisits, courseSubs, students]);
 
   // Progress of every task (latest attempt per student).

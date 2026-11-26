@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { studentGroupInCourse } from '../utils/enrollGroups';
+import { compareStudents } from '../utils/studentOrder';
 import {
   Course, Material, Assignment, Question, ActiveLearning,
   Reply, ActiveLearningType, AL_TYPES, StudentCourseVisit, StudentProfile
@@ -693,9 +694,7 @@ export const DashboardPage: React.FC<DashboardProps> = ({
         // students
         if (drillModal === 'students') {
           // All registered students: those in a course first, then those not yet in any course
-          const relevantStudents = [...allStudents].sort((a, b) =>
-            Number(!allEnrolledIds.has(a.id)) - Number(!allEnrolledIds.has(b.id))
-          );
+          const relevantStudents = [...allStudents].sort(compareStudents);
           return (
             <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-white w-full max-w-2xl rounded-3xl shadow-xl overflow-hidden flex flex-col max-h-[85vh]">

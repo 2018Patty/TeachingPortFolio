@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Clock, Search, ChevronDown, ChevronRight, Users, LogIn } from 'lucide-react';
 import { StudentProfile, StudentCourseVisit } from '../types';
+import { compareStudents } from '../utils/studentOrder';
 
 interface StudentLoginLogProps {
   students: StudentProfile[];
@@ -45,7 +46,7 @@ export const StudentLoginLog: React.FC<StudentLoginLogProps> = ({ students, logi
         const times = (byStudent.get(s.id) || []).sort((a, b) => b.localeCompare(a));
         return { student: s, times, last: times[0] };
       })
-      .sort((a, b) => (b.last || '').localeCompare(a.last || ''));
+      .sort((a, b) => compareStudents(a.student, b.student));
   }, [students, loginLogs]);
 
   const q = query.trim().toLowerCase();
