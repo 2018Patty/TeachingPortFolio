@@ -277,6 +277,19 @@ const GradeRow: React.FC<{
                 className="w-20 px-2.5 py-1.5 text-xs font-bold text-slate-800 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-300"
               />
               {maxScore !== null && <span className="text-[11px] text-slate-500">/ {maxScore}</span>}
+              {maxScore !== null && (
+                <label className="ml-1 inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={score.trim() !== '' && Number(score) === maxScore}
+                    onChange={e => setScore(e.target.checked
+                      ? String(maxScore)
+                      : (grade?.score != null && grade.score !== maxScore ? String(grade.score) : ''))}
+                    className="w-3.5 h-3.5 accent-emerald-600"
+                  />
+                  คะแนนเต็ม
+                </label>
+              )}
             </div>
             <textarea
               aria-label="Feedback"
@@ -374,9 +387,11 @@ export const GradingSection: React.FC<{
   const [taskSort, setTaskSort] = useState<'assigned' | 'due'>('assigned');
   // Expanded / collapsed week groups (key = week number or 'none'); unset = default.
   const [weekOpen, setWeekOpen] = useState<Record<string, boolean>>({});
-  const selectTask = (id: string) => { setTaskId(id); setFilter('all'); };
+  const selectTask = (id: string) => { setTaskId(id); setFilter('all'); setBulkMsg(null); };
   const [filter, setFilter] = useState<Filter>('all');
   const [groupFilter, setGroupFilter] = useState<'all' | number>('all');
+  const [bulk, setBulk] = useState<{ done: number; total: number } | null>(null);
+  const [bulkMsg, setBulkMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   // Full score: from existing grades of this task, else 10.
   const [maxInputs, setMaxInputs] = useState<Record<string, string>>({});
@@ -419,6 +434,52 @@ export const GradingSection: React.FC<{
         : filter === 'pending' ? r.sub && !isGraded(r.sub.note)
         : filter === 'graded' ? r.sub && isGraded(r.sub.note)
         : !r.sub);
+
+  // ── "Full score for everyone": students who submitted, in the selected group ──
+  const bulkTargets = rows
+    .filter(r => r.sub && (groupFilter === 'all' || r.group === groupFilter))
+    .map(r => ({ sub: r.sub!, grade: parseGrade(r.sub!.note) }));
+  const isFull = (g: SubmissionGrade | null) => !!g && maxScore !== null && g.score === maxScore;
+  const allFull = bulkTargets.length > 0 && bulkTargets.every(t => isFull(t.grade));
+
+  const runBulk = async (items: typeof bulkTargets, make: (t: typeof bulkTargets[number]) => SubmissionGrade | null, label: string) => {
+    setBulkMsg(null);
+    setBulk({ done: 0, total: items.length });
+    let failed = 0, done = 0;
+    for (let i = 0; i < items.length; i += 8) {
+      await Promise.all(items.slice(i, i + 8).map(async t => {
+        try { await onSaveGrade(t.sub.submission_id, make(t)); }
+        catch { failed++; }
+        finally { done++; setBulk({ done, total: items.length }); }
+      }));
+    }
+    setBulk(null);
+    setBulkMsg(failed
+      ? { ok: false, text: `${label}สำเร็จ ${items.length - failed} คน · ไม่สำเร็จ ${failed} คน (ลองกดอีกครั้ง)` }
+      : { ok: true, text: `${label}แล้ว ${items.length} คน` });
+  };
+
+  const toggleAllFull = async (checked: boolean) => {
+    if (maxScore === null) return;
+    const scope = groupFilter === 'all' ? '' : ` (กลุ่ม ${groupFilter})`;
+    if (checked) {
+      const todo = bulkTargets.filter(t => !isFull(t.grade));
+      const overwrite = todo.filter(t => t.grade?.score != null).length;
+      const msg = `ให้คะแนนเต็ม ${maxScore} คะแนน กับนักศึกษาที่ส่งงาน${scope} ${todo.length} คน?`
+        + (overwrite ? `\n\nมี ${overwrite} คนที่ให้คะแนนไว้แล้ว คะแนนเดิมจะถูกเปลี่ยนเป็นคะแนนเต็ม` : '')
+        + '\n(feedback ที่เขียนไว้จะยังอยู่ · นักศึกษาที่ยังไม่ส่งงานจะไม่ได้คะแนน)';
+      if (!window.confirm(msg)) return;
+      const now = new Date().toISOString();
+      await runBulk(todo, t => ({ score: maxScore, max_score: maxScore, feedback: t.grade?.feedback ?? '', graded_at: now }), 'ให้คะแนนเต็ม');
+    } else {
+      const todo = bulkTargets.filter(t => isFull(t.grade));
+      if (!window.confirm(`ล้างคะแนนเต็มของนักศึกษา${scope} ${todo.length} คน?\n(feedback ที่เขียนไว้จะยังอยู่)`)) return;
+      const now = new Date().toISOString();
+      await runBulk(todo, t => (t.grade?.feedback.trim()
+        ? { score: null, max_score: maxScore, feedback: t.grade.feedback, graded_at: now }
+        : null), 'ล้างคะแนน');
+    }
+  };
 
   const scores = rows.map(r => parseGrade(r.sub?.note)?.score).filter((x): x is number => typeof x === 'number');
   const avg = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : null;
@@ -703,6 +764,34 @@ export const GradingSection: React.FC<{
         {maxScore === null && (
           <p className="text-[10px] text-amber-700 flex items-center gap-1"><AlertCircle size={10} /> ยังไม่ได้กำหนดคะแนนเต็ม ระบบจะไม่ตรวจว่าคะแนนเกินหรือไม่</p>
         )}
+
+        {/* Give everyone who submitted the full score */}
+        <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border px-3 py-2.5 ${allFull ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-slate-50'}`}>
+          <label className={`inline-flex items-center gap-2 text-xs font-bold select-none ${maxScore === null || bulkTargets.length === 0 || bulk ? 'text-slate-400 cursor-not-allowed' : 'text-slate-800 cursor-pointer'}`}>
+            <input
+              type="checkbox"
+              checked={allFull}
+              disabled={maxScore === null || bulkTargets.length === 0 || !!bulk}
+              onChange={e => toggleAllFull(e.target.checked)}
+              className="w-4 h-4 accent-emerald-600"
+            />
+            ให้คะแนนเต็มทุกคนที่ส่งงาน
+            {maxScore !== null && <span className="font-normal text-slate-500">({maxScore} คะแนน · {bulkTargets.length} คน{groupFilter !== 'all' ? ` ในกลุ่ม ${groupFilter}` : ''})</span>}
+          </label>
+          {bulk && (
+            <span className="inline-flex items-center gap-1.5 text-[11px] text-indigo-700 font-bold">
+              <Save size={11} className="animate-pulse" /> กำลังบันทึก {bulk.done}/{bulk.total}
+            </span>
+          )}
+          {!bulk && bulkMsg && (
+            <span className={`text-[11px] font-bold ${bulkMsg.ok ? 'text-emerald-700' : 'text-red-600'}`}>{bulkMsg.text}</span>
+          )}
+          {!bulk && !bulkMsg && (
+            <span className="text-[10px] text-slate-400">
+              {maxScore === null ? 'กำหนดคะแนนเต็มก่อน' : bulkTargets.length === 0 ? 'ยังไม่มีนักศึกษาส่งงานนี้' : allFull ? 'ทุกคนได้คะแนนเต็มแล้ว · เอาเครื่องหมายออกเพื่อล้างคะแนน' : 'นักศึกษาที่ยังไม่ส่งงานจะไม่ได้คะแนน'}
+            </span>
+          )}
+        </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
           {filterBtn('all', 'ทั้งหมด')}
