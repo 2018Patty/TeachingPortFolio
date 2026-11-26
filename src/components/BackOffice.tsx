@@ -18,7 +18,8 @@ import { groupFromVisitId, groupCount, parseGroupCodes, isAddedByTeacher } from 
 import { TeachingPlanTab } from './TeachingPlanTab';
 import { GradingSection, SubmissionContent, GradeFeedback, type SaveGrade } from './GradingSection';
 import { SubmissionLog } from './MySubmission';
-import { latestAttempts, attemptsOf } from '../utils/grading';
+import { isActivityAnchorId } from '../utils/assignmentLinks';
+import { latestAttempts, attemptsOf, parseGrade, isGraded, formatScore, isLateSubmission } from '../utils/grading';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -102,9 +103,15 @@ const StudentDetailModal: React.FC<{
   visits: StudentCourseVisit[];
   submissions: AssignmentSubmission[];
   assignments: Assignment[];
+  focusId?: string;   // assignment to open and scroll to (clicked score cell)
   onClose: () => void;
-}> = ({ studentId, student, visits, submissions, assignments, onClose }) => {
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+}> = ({ studentId, student, visits, submissions, assignments, focusId, onClose }) => {
+  const [expandedId, setExpandedId] = useState<string | null>(focusId ?? null);
+  useEffect(() => {
+    if (!focusId) return;
+    const el = document.getElementById(`sd-task-${focusId}`);
+    el?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }, [focusId]);
 
   const cfg = avatarCfg(studentId);
   const name = student
@@ -185,11 +192,12 @@ const StudentDetailModal: React.FC<{
             return (
               <div
                 key={assign.assignment_id}
-                className={`rounded-2xl border overflow-hidden transition-all ${
+                id={`sd-task-${assign.assignment_id}`}
+                className={`rounded-2xl border overflow-hidden transition-all scroll-mt-2 ${
                   sub
                     ? 'border-emerald-200 bg-emerald-50/40'
                     : 'border-slate-200 bg-slate-50/40'
-                }`}
+                } ${assign.assignment_id === focusId ? 'ring-2 ring-indigo-400' : ''}`}
               >
                 {/* Assignment header — clickable when submitted */}
                 <div
@@ -495,7 +503,7 @@ const StudentsSection: React.FC<{
   submissions: AssignmentSubmission[];
   assignments: Assignment[];
   students: StudentProfile[];
-  onSelectStudent: (sid: string) => void;
+  onSelectStudent: (sid: string, taskId?: string) => void;
   onChangeGroup: (sid: string, group: number | null) => Promise<void>;
   onAddStudent: (input: { existingId: string } | { profile: StudentFields }, group: number | null) => Promise<void>;
   onUpdateStudent: (id: string, fields: StudentFields) => Promise<void>;
@@ -526,6 +534,17 @@ const StudentsSection: React.FC<{
       .find((g): g is number => g !== null) ?? null;
     return { sid, student, visitCount, submissionCount: studentSubmissions.length, studentSubmissions, lastVisit, group, addedByTeacher };
   }).sort((a, b) => (a.group ?? 999) - (b.group ?? 999));
+
+  // Full score of each task, taken from its graded submissions.
+  const maxOf = (taskId: string): number | null => {
+    const counts = new Map<number, number>();
+    for (const sub of uniqueCourseSubmissions) {
+      if (sub.assignment_id !== taskId) continue;
+      const m = parseGrade(sub.note)?.max_score;
+      if (m != null) counts.set(m, (counts.get(m) || 0) + 1);
+    }
+    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  };
 
   const [groupFilter, setGroupFilter] = useState<'all' | 'none' | number>('all');
   const [savingGroupFor, setSavingGroupFor] = useState<string | null>(null);
@@ -640,7 +659,7 @@ const StudentsSection: React.FC<{
           <div className="px-5 py-3.5 border-b border-slate-100 flex items-center gap-2">
             <Users size={14} className="text-slate-500" />
             <span className="text-xs font-bold text-slate-700">รายชื่อนักศึกษา</span>
-            <span className="text-[10px] text-slate-400 ml-1 hidden md:inline">— คลิกชื่อเพื่อดูรายละเอียด · เปลี่ยนกลุ่มได้ที่คอลัมน์ "กลุ่ม"</span>
+            <span className="text-[10px] text-slate-400 ml-1 hidden md:inline">— คลิกชื่อเพื่อดูรายละเอียด · คลิกคะแนนเพื่อดูงานที่ส่ง · <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500 align-middle" /> = ส่งช้า</span>
             <span className="ml-auto">{addButton}</span>
           </div>
           {groupError && <div className="px-5 py-2 text-[11px] text-red-600 font-medium bg-red-50 border-b border-red-100">{groupError}</div>}
@@ -677,26 +696,31 @@ const StudentsSection: React.FC<{
                   <th className="text-left px-4 py-2.5 font-semibold text-slate-500">รหัส</th>
                   <th className="text-center px-4 py-2.5 font-semibold text-slate-500">กลุ่ม</th>
                   <th className="text-center px-4 py-2.5 font-semibold text-slate-500">เข้าชม (ครั้ง)</th>
-                  <th className="text-center px-4 py-2.5 font-semibold text-slate-500">ส่งงาน (ครั้ง)</th>
-                  <th className="text-left px-4 py-2.5 font-semibold text-slate-500">งานที่ส่ง</th>
+                  {assignments.map(t => (
+                    <th key={t.assignment_id} className="text-center px-2 py-2.5 font-semibold text-slate-500 min-w-[84px] max-w-[120px] align-bottom" title={t.title}>
+                      <div className="line-clamp-2 leading-tight text-[10px]">{t.title.replace(/^\[Active Learning\]\s*/, '')}</div>
+                      <div className="text-[9px] font-normal text-slate-400 mt-0.5">
+                        {t.title.startsWith('[Active Learning]') ? 'AL · ' : ''}{t.due_date ? `ส่ง ${t.due_date.slice(5).split('-').reverse().join('/')}` : ''}
+                        {maxOf(t.assignment_id) !== null ? ` · เต็ม ${maxOf(t.assignment_id)}` : ''}
+                      </div>
+                    </th>
+                  ))}
+                  <th className="text-center px-3 py-2.5 font-semibold text-slate-500 whitespace-nowrap">รวม</th>
                   <th className="text-left px-4 py-2.5 font-semibold text-slate-500">เข้าชมล่าสุด</th>
                   <th className="text-center px-4 py-2.5 font-semibold text-slate-500">จัดการ</th>
                 </tr>
               </thead>
               <tbody>
                 {visibleRows.length === 0 && (
-                  <tr><td colSpan={9} className="px-4 py-6 text-center text-slate-400 text-xs">ยังไม่มีนักศึกษาในกลุ่มนี้</td></tr>
+                  <tr><td colSpan={8 + assignments.length} className="px-4 py-6 text-center text-slate-400 text-xs">ยังไม่มีนักศึกษาในกลุ่มนี้</td></tr>
                 )}
-                {visibleRows.map(({ sid, student, visitCount, submissionCount, studentSubmissions, lastVisit, group, addedByTeacher }, i) => {
+                {visibleRows.map(({ sid, student, visitCount, studentSubmissions, lastVisit, group, addedByTeacher }, i) => {
                   const cfg = avatarCfg(sid);
                   const name = student
                     ? `${student.first_name} ${student.last_name}`.trim() || student.email
                     : sid.slice(0, 8) + '...';
                   const email = student?.email || '—';
-                  const submittedAssignmentTitles = studentSubmissions.map(sub => {
-                    const asgn = assignments.find(a => a.assignment_id === sub.assignment_id);
-                    return asgn?.title || sub.assignment_id;
-                  });
+                  let total = 0, totalMax = 0, scored = 0;
 
                   return (
                     <tr key={sid} className="border-b border-slate-50 hover:bg-indigo-50/30 transition-colors cursor-pointer group" onClick={() => onSelectStudent(sid)}>
@@ -743,28 +767,40 @@ const StudentsSection: React.FC<{
                           {visitCount}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-center">
-                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-bold text-[11px] ${
-                          submissionCount > 0
-                            ? 'bg-emerald-50 text-emerald-700'
-                            : 'bg-slate-100 text-slate-400'
-                        }`}>
-                          <CheckCircle size={10} />
-                          {submissionCount}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 max-w-[200px]">
-                        {submittedAssignmentTitles.length > 0 ? (
-                          <div className="flex flex-wrap gap-1">
-                            {submittedAssignmentTitles.map((title, ti) => (
-                              <span key={ti} className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-100 px-1.5 py-0.5 rounded-md">
-                                {title}
-                              </span>
-                            ))}
-                          </div>
-                        ) : (
-                          <span className="text-slate-300 text-[11px]">ยังไม่ส่งงาน</span>
-                        )}
+                      {assignments.map(t => {
+                        const sub = studentSubmissions.find(x => x.assignment_id === t.assignment_id);
+                        const g = sub ? parseGrade(sub.note) : null;
+                        if (g && g.score !== null) {
+                          total += g.score; scored++;
+                          if (g.max_score !== null) totalMax += g.max_score;
+                        }
+                        const late = sub ? isLateSubmission(sub.submitted_at, t.due_date) : false;
+                        const nAttempts = sub ? courseSubmissions.filter(x => x.student_id === sid && x.assignment_id === t.assignment_id).length : 0;
+                        const label = !sub ? '—'
+                          : g && g.score !== null ? formatScore(g)
+                          : isGraded(sub.note) ? 'มี feedback'
+                          : 'รอตรวจ';
+                        const cls = !sub ? 'text-slate-300 hover:bg-slate-100'
+                          : g && g.score !== null ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 font-extrabold'
+                          : 'bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 font-bold';
+                        return (
+                          <td key={t.assignment_id} className="px-2 py-3 text-center" onClick={e => e.stopPropagation()}>
+                            <button
+                              type="button"
+                              onClick={() => onSelectStudent(sid, t.assignment_id)}
+                              title={sub
+                                ? `${t.title}\nส่งเมื่อ ${new Date(sub.submitted_at || '').toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' })}${nAttempts > 1 ? ` (ส่ง ${nAttempts} ครั้ง)` : ''}${late ? ' · ส่งช้า' : ''}\nคลิกเพื่อดูรายละเอียดการส่งงาน`
+                                : `${t.title}\nยังไม่ส่ง`}
+                              className={`inline-flex items-center justify-center gap-1 min-w-[52px] px-2 py-1 rounded-lg text-[11px] whitespace-nowrap transition ${cls}`}
+                            >
+                              {label}
+                              {late && <span className="w-1.5 h-1.5 rounded-full bg-red-500" aria-label="ส่งช้า" />}
+                            </button>
+                          </td>
+                        );
+                      })}
+                      <td className="px-3 py-3 text-center whitespace-nowrap font-extrabold text-slate-700 text-[11px]">
+                        {scored > 0 ? `${+total.toFixed(2)}${totalMax > 0 ? ` / ${+totalMax.toFixed(2)}` : ''}` : <span className="text-slate-300 font-normal">—</span>}
                       </td>
                       <td className="px-4 py-3 text-slate-400 text-[10px]">
                         {lastVisit?.visited_at
@@ -1475,7 +1511,16 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
 }) => {
   const [view, setView] = useState<BoView>({ type: 'dashboard' });
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [detailStudent, setDetailStudent] = useState<{ sid: string; courseId: string } | null>(null);
+  const [detailStudent, setDetailStudent] = useState<{ sid: string; courseId: string; focusId?: string } | null>(null);
+
+  // Assignments plus Active Learning activities that take submissions.
+  const courseTasks = (courseId: string): Assignment[] => [
+    ...assignments.filter(a => a.course_id === courseId && !isActivityAnchorId(a.assignment_id)),
+    ...activities.filter(a => a.course_id === courseId && a.is_assignment).map(a => ({
+      assignment_id: a.activity_id, course_id: a.course_id, title: `[Active Learning] ${a.title}`,
+      description: a.description, due_date: a.due_date || '', status: 'open' as const,
+    })),
+  ];
 
   const toggleCourse = (courseId: string) => {
     const willExpand = expandedId !== courseId;
@@ -1555,8 +1600,8 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
       <StudentsSection
         course={currentCourse}
         visits={visits} submissions={submissions}
-        assignments={cAssignments} students={students}
-        onSelectStudent={(sid) => setDetailStudent({ sid, courseId })}
+        assignments={courseTasks(courseId)} students={students}
+        onSelectStudent={(sid, focusId) => setDetailStudent({ sid, courseId, focusId })}
         onChangeGroup={(sid, g) => onChangeStudentGroup(sid, courseId, g)}
         onAddStudent={(input, g) => onAddStudentToCourse(courseId, input, g)}
         onUpdateStudent={onUpdateStudent}
@@ -1660,14 +1705,7 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
   const modalStudent = detailStudent ? students.find(s => s.id === detailStudent.sid) : undefined;
   const modalVisits = detailStudent ? visits.filter(v => v.course_id === detailStudent.courseId && v.student_id === detailStudent.sid) : [];
   const modalSubmissions = detailStudent ? submissions.filter(s => s.course_id === detailStudent.courseId && s.student_id === detailStudent.sid) : [];
-  // Assignments plus Active Learning activities that take submissions.
-  const modalAssignments: Assignment[] = detailStudent ? [
-    ...assignments.filter(a => a.course_id === detailStudent.courseId),
-    ...activities.filter(a => a.course_id === detailStudent.courseId && a.is_assignment).map(a => ({
-      assignment_id: a.activity_id, course_id: a.course_id, title: `[Active Learning] ${a.title}`,
-      description: a.description, due_date: a.due_date || '', status: 'open' as const,
-    })),
-  ] : [];
+  const modalAssignments: Assignment[] = detailStudent ? courseTasks(detailStudent.courseId) : [];
 
   return (
     <>
@@ -1862,6 +1900,7 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
         visits={modalVisits}
         submissions={modalSubmissions}
         assignments={modalAssignments}
+        focusId={detailStudent.focusId}
         onClose={() => setDetailStudent(null)}
       />
     )}

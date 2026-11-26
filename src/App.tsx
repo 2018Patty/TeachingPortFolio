@@ -415,13 +415,14 @@ export default function App() {
     return { success: true, message: 'เปลี่ยนรหัสผ่านสำเร็จแล้ว!' };
   };
 
-  const handlePhotoUpload = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = () => reject(new Error('ไม่สามารถอ่านไฟล์รูปได้'));
-      reader.readAsDataURL(file);
-    });
+  // Profile photo goes to Storage; only its URL is kept in site_settings, which every
+  // visitor loads on page open (a base64 image there added ~90 KB to each load).
+  const handlePhotoUpload = async (file: File): Promise<string> => {
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const path = `profile/${Date.now()}_${safeName}`;
+    const { error } = await supabase.storage.from('course-materials').upload(path, file, { upsert: false });
+    if (error) throw new Error(`อัปโหลดรูปไม่สำเร็จ: ${error.message}`);
+    return supabase.storage.from('course-materials').getPublicUrl(path).data.publicUrl;
   };
 
   useEffect(() => {
