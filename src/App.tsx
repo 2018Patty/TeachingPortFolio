@@ -184,6 +184,9 @@ export default function App() {
   const [showCourseModal, setShowCourseModal] = useState(false);
   const [editingCourse, setEditingCourse] = useState<Course | null>(null);
   const [courseFormError, setCourseFormError] = useState('');
+  // New course only: copy materials, assignments and Active Learning from this course.
+  const [copyFromCourseId, setCopyFromCourseId] = useState('');
+  const [courseSaving, setCourseSaving] = useState(false);
   const [courseForm, setCourseForm] = useState({
     course_code: '',
     course_name_th: '',
@@ -1108,10 +1111,79 @@ export default function App() {
     setStudentProfile(updated);
   };
 
+  // Pick a course to copy from: fill the form with its details. Term and year stay as
+  // chosen, and the enrolment code starts empty so the new class gets its own code.
+  const handleCopyFromCourse = (courseId: string) => {
+    setCopyFromCourseId(courseId);
+    const src = courses.find(c => c.course_id === courseId);
+    if (!src) return;
+    setCourseForm(f => ({
+      ...f,
+      course_code: src.course_code,
+      course_name_th: src.course_name_th,
+      course_name_en: src.course_name_en,
+      description: src.description,
+      objectivesInput: (src.objectives || []).join('\n'),
+      credit: src.credit || '3((3)-0-6)',
+      section: src.section || '01',
+      theory_hours: src.theory_hours ?? 0,
+      practice_hours: src.practice_hours ?? 0,
+      total_weeks: src.total_weeks ?? 15,
+      enrollment_code: '',
+    }));
+  };
+
+  // Copy a course's materials, assignments and Active Learning into a new course.
+  // Students, submissions, grades, Q&A and teaching reflections are not copied.
+  // New ids keep the original order (ids carry a timestamp used for sorting).
+  const copyCourseContent = async (fromId: string, toId: string) => {
+    const [matRes, asmRes, actRes] = await Promise.all([
+      supabase.from('materials').select('*').eq('course_id', fromId).order('created_at', { ascending: true }),
+      supabase.from('assignments').select('*').eq('course_id', fromId).order('created_at', { ascending: true }),
+      supabase.from('active_learning').select('*').eq('course_id', fromId).order('created_at', { ascending: true }),
+    ]);
+    const err = matRes.error || asmRes.error || actRes.error;
+    if (err) throw err;
+
+    const base = Date.now();
+    const newId = (prefix: string, i: number) => `${prefix}-${base + i}-${Math.random().toString(36).slice(2, 9)}`;
+    const strip = <T extends { created_at?: string }>(row: T): Omit<T, 'created_at'> => {
+      const { created_at: _created, ...rest } = row;
+      return rest;
+    };
+
+    const newMaterials: Material[] = ((matRes.data || []) as Material[]).map((m, i) =>
+      ({ ...strip(m), material_id: newId('mat', i), course_id: toId }));
+    // Hidden anchor rows (al-...) belong to the old course's submissions; skip them.
+    const newAssignments: Assignment[] = ((asmRes.data || []) as Assignment[])
+      .filter(a => !isActivityAnchorId(a.assignment_id))
+      .map((a, i) => ({ ...strip(a), assignment_id: newId('asm', i), course_id: toId }));
+    const newActivities: ActiveLearning[] = ((actRes.data || []) as ActiveLearning[]).map((a, i) =>
+      ({ ...strip(a), activity_id: newId('al', i), course_id: toId }));
+
+    if (newMaterials.length) {
+      const { error } = await supabase.from('materials').insert(newMaterials);
+      if (error) throw error;
+    }
+    if (newAssignments.length) {
+      const { error } = await supabase.from('assignments').insert(newAssignments);
+      if (error) throw error;
+    }
+    if (newActivities.length) {
+      const { error } = await supabase.from('active_learning').insert(newActivities);
+      if (error) throw error;
+    }
+    setMaterials(prev => [...prev, ...newMaterials]);
+    setAssignments(prev => [...prev, ...newAssignments]);
+    setActivities(prev => [...prev, ...newActivities]);
+    return { materials: newMaterials.length, assignments: newAssignments.length, activities: newActivities.length };
+  };
+
   // 8. CRUD Handlers
   // Save or Add course
   const handleSaveCourse = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (courseSaving) return;
     if (!courseForm.course_code.trim()) {
       setCourseFormError('กรุณากรอกรหัสวิชา *');
       return;
@@ -1151,6 +1223,10 @@ export default function App() {
       setCourses(courses.map((c: Course) => c.course_id === editingCourse.course_id ? { ...c, ...updateData } : c));
     } else {
       const course_id = `${courseForm.course_code.trim()}-${courseForm.semester_id}-${courseForm.year}`;
+      if (courses.some(c => c.course_id === course_id)) {
+        setCourseFormError(`มีวิชา ${courseForm.course_code.trim()} ในภาค ${courseForm.semester_id}/${courseForm.year} อยู่แล้ว กรุณาเปลี่ยนภาคการศึกษาหรือปี`);
+        return;
+      }
       const newCourse: Course = {
         course_id,
         course_code: courseForm.course_code.trim(),
@@ -1168,13 +1244,27 @@ export default function App() {
         enrollment_code: courseForm.enrollment_code.trim(),
         views: 0
       };
-      const { error } = await supabase.from('courses').insert(newCourse);
-      if (error) { alert(`ไม่สามารถเพิ่มวิชาได้: ${error.message}`); return; }
-      setCourses([...courses, newCourse]);
+      setCourseSaving(true);
+      try {
+        const { error } = await supabase.from('courses').insert(newCourse);
+        if (error) { alert(`ไม่สามารถเพิ่มวิชาได้: ${error.message}`); return; }
+        setCourses(prev => [...prev, newCourse]);
+        if (copyFromCourseId) {
+          try {
+            const n = await copyCourseContent(copyFromCourseId, course_id);
+            alert(`สร้างรายวิชาแล้ว และคัดลอกเอกสาร ${n.materials} รายการ, งานมอบหมาย ${n.assignments} งาน, Active Learning ${n.activities} กิจกรรม\nอย่าลืมตรวจวันกำหนดส่งงานให้ตรงกับภาคการศึกษาใหม่`);
+          } catch (copyErr) {
+            alert(`สร้างรายวิชาแล้ว แต่คัดลอกเนื้อหาไม่ครบ: ${(copyErr as Error).message}`);
+          }
+        }
+      } finally {
+        setCourseSaving(false);
+      }
     }
 
     setShowCourseModal(false);
     setEditingCourse(null);
+    setCopyFromCourseId('');
   };
 
   const handleEditCourseClick = (course: Course, e: React.MouseEvent) => {
@@ -1366,6 +1456,8 @@ export default function App() {
 
   const handleAddCourseClick = () => {
     setEditingCourse(null);
+    setCopyFromCourseId('');
+    setCourseFormError('');
     setCourseForm({
       course_code: '',
       course_name_th: '',
@@ -3170,6 +3262,38 @@ export default function App() {
                 </div>
               )}
 
+              {!editingCourse && courses.length > 0 && (
+                <div className="space-y-1.5 bg-indigo-50/70 border border-indigo-100 rounded-2xl p-3.5">
+                  <label htmlFor="copy-from" className="block text-xs font-semibold text-indigo-900">คัดลอกจากวิชาเดิม (ไม่บังคับ)</label>
+                  <select
+                    id="copy-from"
+                    value={copyFromCourseId}
+                    onChange={(e) => handleCopyFromCourse(e.target.value)}
+                    className="w-full text-xs text-slate-900 bg-white border border-slate-200 rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  >
+                    <option value="">— สร้างวิชาว่าง ไม่คัดลอก —</option>
+                    {[...courses]
+                      .sort((a, b) => (b.year - a.year) || (b.semester_id - a.semester_id) || a.course_code.localeCompare(b.course_code))
+                      .map(c => (
+                        <option key={c.course_id} value={c.course_id}>
+                          {c.course_code} {c.course_name_th} (ภาค {c.semester_id}/{c.year})
+                        </option>
+                      ))}
+                  </select>
+                  {copyFromCourseId ? (
+                    <p className="text-[11px] text-indigo-700 leading-relaxed">
+                      จะคัดลอกข้อมูลวิชา เอกสารประกอบการสอน {materials.filter(m => m.course_id === copyFromCourseId).length} รายการ,
+                      งานมอบหมาย {assignments.filter(a => a.course_id === copyFromCourseId).length} งาน และ
+                      Active Learning {activities.filter(a => a.course_id === copyFromCourseId).length} กิจกรรม
+                      — ไม่คัดลอกรายชื่อนักศึกษา การส่งงาน คะแนน การถามตอบ และบันทึกหลังสอน
+                      <span className="block text-slate-500 mt-0.5">เลือกภาคการศึกษา/ปีของวิชาใหม่ และตั้งรหัสลงทะเบียนใหม่ด้านล่าง</span>
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-slate-500">เลือกวิชาเพื่อเติมข้อมูลในฟอร์มและคัดลอกเนื้อหาทั้งหมดไปยังวิชาใหม่</p>
+                  )}
+                </div>
+              )}
+
               {/* รหัสวิชา + กลุ่มเรียน */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
@@ -3406,9 +3530,11 @@ export default function App() {
                 </button>
                 <button
                   type="submit"
-                  className="text-xs text-white bg-[#4F46E5] hover:bg-indigo-700 font-bold px-5 py-2.5 rounded-xl transition"
+                  disabled={courseSaving}
+                  className="inline-flex items-center gap-1.5 text-xs text-white bg-[#4F46E5] hover:bg-indigo-700 font-bold px-5 py-2.5 rounded-xl transition disabled:opacity-60"
                 >
-                  {editingCourse ? 'บันทึกการแก้ไข' : 'สร้างรายวิชา'}
+                  {courseSaving && <Loader2 size={13} className="animate-spin" />}
+                  {editingCourse ? 'บันทึกการแก้ไข' : courseSaving ? 'กำลังสร้าง...' : copyFromCourseId ? 'สร้างรายวิชาและคัดลอกเนื้อหา' : 'สร้างรายวิชา'}
                 </button>
               </div>
             </form>
