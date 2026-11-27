@@ -2226,7 +2226,7 @@ export default function App() {
                                         {mat.title}
                                       </h4>
                                       {mat.description && (
-                                        <p className="text-[11px] text-slate-500 mt-1 line-clamp-1 font-normal leading-relaxed">
+                                        <p className="text-[11px] text-slate-500 mt-1 whitespace-pre-line font-normal leading-relaxed">
                                           {mat.description}
                                         </p>
                                       )}
@@ -3587,12 +3587,12 @@ export default function App() {
 
               <div className="space-y-1">
                 <label className="block text-xs font-semibold text-slate-700">อธิบายประกอบเพิ่มเติม (ไม่บังคับ)</label>
-                <input
-                  type="text"
+                <textarea
+                  rows={4}
                   value={materialForm.description}
                   onChange={(e) => setMaterialForm({ ...materialForm, description: e.target.value })}
-                  placeholder="ย่อหน้าแนะนำสิ่งที่ต้องเรียนรู้คร่าว ๆ..."
-                  className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  placeholder="ย่อหน้าแนะนำสิ่งที่ต้องเรียนรู้คร่าว ๆ... (กด Enter เพื่อขึ้นบรรทัดใหม่)"
+                  className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl px-3.5 py-2.5 leading-relaxed resize-y focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                 />
               </div>
 
