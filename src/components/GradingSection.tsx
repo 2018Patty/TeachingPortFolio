@@ -9,6 +9,7 @@ import {
 } from '../types';
 import { groupFromVisitId } from '../utils/enrollGroups';
 import { compareStudents } from '../utils/studentOrder';
+import { useUnsavedWork } from '../utils/unsavedWork';
 import {
   parseGrade, isGraded, formatScore, isLateSubmission, legacyNote, latestAttempts, type SubmissionGrade,
 } from '../utils/grading';
@@ -525,14 +526,9 @@ export const GradingSection: React.FC<{
   const [bulk, setBulk] = useState<{ done: number; total: number } | null>(null);
   const [bulkMsg, setBulkMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
-  // Warn before leaving the page with unsaved scores.
+  // Unsaved scores: warn before leaving the page, and hold off automatic updates.
   const hasDrafts = Object.keys(drafts).length > 0;
-  useEffect(() => {
-    if (!hasDrafts) return;
-    const h = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
-    window.addEventListener('beforeunload', h);
-    return () => window.removeEventListener('beforeunload', h);
-  }, [hasDrafts]);
+  useUnsavedWork(hasDrafts);
 
   // Full score: from existing grades of this task, else 10.
   const [maxInputs, setMaxInputs] = useState<Record<string, string>>({});
