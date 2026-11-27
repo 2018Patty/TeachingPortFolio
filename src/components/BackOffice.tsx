@@ -49,7 +49,7 @@ interface BackOfficeProps {
   students: StudentProfile[];
   siteProfile: SiteProfile;
   onNavigateCourses: () => void;
-  onNavigateToCourse: (courseId: string, tab: string) => void;
+  onNavigateToCourse: (courseId: string, tab: string, itemId?: string) => void;
   onEditCourse: (course: Course) => void;
   onAddCourse: () => void;
   onSavePdpa: (data: Pick<SiteProfile, 'pdpa_purposes' | 'pdpa_retention' | 'pdpa_third_party' | 'pdpa_updated_at' | 'pdpa_effective_date' | 'pdpa_version'>) => Promise<void>;
@@ -96,6 +96,21 @@ function avatarCfg(seed: string) {
   return { icon: FA_ICONS[abs % FA_ICONS.length], color: AVATAR_COLORS[(abs >> 4) % AVATAR_COLORS.length] };
 }
 
+/** Course tab that shows this assignment / activity. */
+const taskTab = (id: string) => (isActivityAnchorId(id) ? 'active_learning' : 'assignments');
+
+/** Small "view details" link shown next to a task title. */
+const DetailLink: React.FC<{ onClick: () => void; label?: string }> = ({ onClick, label = 'ดูรายละเอียด' }) => (
+  <button
+    type="button"
+    onClick={e => { e.stopPropagation(); onClick(); }}
+    title="เปิดรายละเอียดในหน้าวิชา"
+    className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-600 hover:text-indigo-800 hover:underline underline-offset-2 shrink-0"
+  >
+    <ExternalLink size={10} /> {label}
+  </button>
+);
+
 // ─── Student Detail Modal ─────────────────────────────────────────────────────
 
 const StudentDetailModal: React.FC<{
@@ -107,8 +122,9 @@ const StudentDetailModal: React.FC<{
   focusId?: string;   // assignment to open and scroll to (clicked score cell)
   courseSubmissions: AssignmentSubmission[];   // whole course, to know each task's full score
   onSaveGrade: SaveGrade;
+  onOpenTask: (taskId: string) => void;
   onClose: () => void;
-}> = ({ studentId, student, visits, submissions, assignments, focusId, courseSubmissions, onSaveGrade, onClose }) => {
+}> = ({ studentId, student, visits, submissions, assignments, focusId, courseSubmissions, onSaveGrade, onOpenTask, onClose }) => {
   const [expandedId, setExpandedId] = useState<string | null>(focusId ?? null);
   useEffect(() => {
     if (!focusId) return;
@@ -209,7 +225,10 @@ const StudentDetailModal: React.FC<{
                 >
                   <div className="min-w-0">
                     <div className="text-xs font-bold text-slate-800 truncate">{assign.title}</div>
-                    <div className="text-[10px] text-slate-400 mt-0.5">กำหนดส่ง {assign.due_date}</div>
+                    <div className="text-[10px] text-slate-400 mt-0.5 flex items-center gap-2 flex-wrap">
+                      <span>กำหนดส่ง {assign.due_date}</span>
+                      <DetailLink onClick={() => onOpenTask(assign.assignment_id)} label="ดูรายละเอียดงาน" />
+                    </div>
                     {sub?.submitted_at && (
                       <div className="text-[10px] text-emerald-600 mt-0.5">
                         ส่งเมื่อ {new Date(sub.submitted_at).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' })}
@@ -511,13 +530,14 @@ const StudentsSection: React.FC<{
   assignments: Assignment[];
   students: StudentProfile[];
   onSelectStudent: (sid: string, taskId?: string) => void;
+  onOpenTask: (taskId: string) => void;
   onChangeGroup: (sid: string, group: number | null) => Promise<void>;
   onAddStudent: (input: { existingId: string } | { profile: StudentFields }, group: number | null) => Promise<void>;
   onUpdateStudent: (id: string, fields: StudentFields) => Promise<void>;
   onRemoveFromCourse: (sid: string) => Promise<void>;
   onDeleteAccount: (sid: string) => Promise<void>;
 }> = ({
-  course, visits, submissions, assignments, students, onSelectStudent, onChangeGroup,
+  course, visits, submissions, assignments, students, onSelectStudent, onOpenTask, onChangeGroup,
   onAddStudent, onUpdateStudent, onRemoveFromCourse, onDeleteAccount,
 }) => {
   const courseVisits = visits.filter(v => v.course_id === course.course_id);
@@ -763,7 +783,14 @@ const StudentsSection: React.FC<{
                   <th className="text-center px-4 py-2.5 font-semibold text-slate-500">เข้าชม (ครั้ง)</th>
                   {assignments.map(t => (
                     <th key={t.assignment_id} className="text-center px-2 py-2.5 font-semibold text-slate-500 min-w-[84px] max-w-[120px] align-bottom" title={t.title}>
-                      <div className="line-clamp-2 leading-tight text-[10px]">{t.title.replace(/^\[Active Learning\]\s*/, '')}</div>
+                      <button
+                        type="button"
+                        onClick={() => onOpenTask(t.assignment_id)}
+                        title={`${t.title}\nคลิกเพื่อดูรายละเอียดงาน`}
+                        className="line-clamp-2 leading-tight text-[10px] text-indigo-700 hover:text-indigo-900 hover:underline underline-offset-2"
+                      >
+                        {t.title.replace(/^\[Active Learning\]\s*/, '')}
+                      </button>
                       <div className="text-[9px] font-normal text-slate-400 mt-0.5">
                         {t.title.startsWith('[Active Learning]') ? 'AL · ' : ''}{t.due_date ? `ส่ง ${t.due_date.slice(5).split('-').reverse().join('/')}` : ''}
                         {maxOf(t.assignment_id) !== null ? ` · เต็ม ${maxOf(t.assignment_id)}` : ''}
@@ -1095,9 +1122,9 @@ const GenericSection: React.FC<{
   title: string;
   icon: React.ReactNode;
   count: number;
-  items: { key: string; label: string; sub?: string }[];
+  items: { key: string; label: string; sub?: string; itemId?: string }[];   // itemId → links to the item
   tab: string;
-  onNavigate: (tab: string) => void;
+  onNavigate: (tab: string, itemId?: string) => void;
 }> = ({ title, icon, count, items, tab, onNavigate }) => (
   <div className="space-y-4">
     <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
@@ -1118,7 +1145,24 @@ const GenericSection: React.FC<{
         <p className="text-xs text-slate-400 text-center py-8">ยังไม่มีข้อมูล</p>
       ) : (
         <div className="space-y-2">
-          {items.map(item => (
+          {items.map(item => item.itemId ? (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => onNavigate(tab, item.itemId)}
+              title="คลิกเพื่อดูรายละเอียด"
+              className="w-full flex items-start gap-2.5 px-3 py-2.5 bg-slate-50 hover:bg-indigo-50 border border-transparent hover:border-indigo-100 rounded-xl text-left transition group"
+            >
+              <ChevronRight size={13} className="text-slate-300 group-hover:text-indigo-500 mt-0.5 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-semibold text-slate-700 group-hover:text-indigo-700 truncate">{item.label}</div>
+                {item.sub && <div className="text-[10px] text-slate-400 mt-0.5 truncate">{item.sub}</div>}
+              </div>
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-500 opacity-60 group-hover:opacity-100 shrink-0 mt-0.5">
+                <ExternalLink size={10} /> ดูรายละเอียด
+              </span>
+            </button>
+          ) : (
             <div key={item.key} className="flex items-start gap-2.5 px-3 py-2.5 bg-slate-50 rounded-xl">
               <ChevronRight size={13} className="text-slate-300 mt-0.5 shrink-0" />
               <div className="min-w-0">
@@ -1637,7 +1681,8 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
           questions={questions} replies={replies} activities={activities}
           visits={visits} allStudents={students}
           onNavigateCourses={onNavigateCourses}
-          onSelectCourse={(id, section) => {
+          onSelectCourse={(id, section, itemId) => {
+            if (itemId && section) { onNavigateToCourse(id, section, itemId); return; }
             setExpandedId(id);
             setView({ type: 'course', courseId: id, section: (section as CourseSection) || 'overview' });
           }}
@@ -1672,7 +1717,7 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
         reflections={cReflections}
         visits={visits}
         onEdit={() => onEditCourse(currentCourse)}
-        onNavigate={(tab) => onNavigateToCourse(courseId, tab)}
+        onNavigate={(tab, itemId) => onNavigateToCourse(courseId, tab, itemId)}
       />
     );
 
@@ -1682,6 +1727,7 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
         visits={visits} submissions={submissions}
         assignments={courseTasks(courseId)} students={students}
         onSelectStudent={(sid, focusId) => setDetailStudent({ sid, courseId, focusId })}
+        onOpenTask={(taskId) => onNavigateToCourse(courseId, taskTab(taskId), taskId)}
         onChangeGroup={(sid, g) => onChangeStudentGroup(sid, courseId, g)}
         onAddStudent={(input, g) => onAddStudentToCourse(courseId, input, g)}
         onUpdateStudent={onUpdateStudent}
@@ -1697,7 +1743,7 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
         count={currentCourse.objectives?.length || 0}
         items={(currentCourse.objectives || []).map((o, i) => ({ key: String(i), label: o }))}
         tab="info"
-        onNavigate={(tab) => onNavigateToCourse(courseId, tab)}
+        onNavigate={(tab, itemId) => onNavigateToCourse(courseId, tab, itemId)}
       />
     );
 
@@ -1706,12 +1752,12 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
         title="เอกสารประกอบการสอน"
         icon={<FileText size={14} className="text-emerald-500" />}
         count={cMaterials.length}
-        items={cMaterials.slice(0, 8).map(m => ({
-          key: m.material_id, label: m.title,
+        items={cMaterials.map(m => ({
+          key: m.material_id, label: m.title, itemId: m.material_id,
           sub: `สัปดาห์ ${m.week_number} · ${m.type}`,
         }))}
         tab="materials"
-        onNavigate={(tab) => onNavigateToCourse(courseId, tab)}
+        onNavigate={(tab, itemId) => onNavigateToCourse(courseId, tab, itemId)}
       />
     );
 
@@ -1720,12 +1766,12 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
         title="Active Learning"
         icon={<Zap size={14} className="text-amber-500" />}
         count={cActivities.length}
-        items={cActivities.slice(0, 8).map(a => ({
-          key: a.activity_id, label: a.title,
+        items={cActivities.map(a => ({
+          key: a.activity_id, label: a.title, itemId: a.activity_id,
           sub: a.duration ? `${a.duration}` : undefined,
         }))}
         tab="active_learning"
-        onNavigate={(tab) => onNavigateToCourse(courseId, tab)}
+        onNavigate={(tab, itemId) => onNavigateToCourse(courseId, tab, itemId)}
       />
     );
 
@@ -1739,7 +1785,7 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
           sub: `โดย ${q.author_name}`,
         }))}
         tab="qa"
-        onNavigate={(tab) => onNavigateToCourse(courseId, tab)}
+        onNavigate={(tab, itemId) => onNavigateToCourse(courseId, tab, itemId)}
       />
     );
 
@@ -1748,12 +1794,12 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
         title="งานมอบหมาย"
         icon={<ClipboardList size={14} className="text-rose-500" />}
         count={cAssignments.length}
-        items={cAssignments.slice(0, 8).map(a => ({
-          key: a.assignment_id, label: a.title,
+        items={cAssignments.map(a => ({
+          key: a.assignment_id, label: a.title, itemId: a.assignment_id,
           sub: `กำหนดส่ง ${a.due_date} · ${a.status}`,
         }))}
         tab="assignments"
-        onNavigate={(tab) => onNavigateToCourse(courseId, tab)}
+        onNavigate={(tab, itemId) => onNavigateToCourse(courseId, tab, itemId)}
       />
     );
 
@@ -1766,6 +1812,7 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
         students={students}
         visits={visits}
         onSaveGrade={onSaveGrade}
+        onOpenTask={(taskId) => onNavigateToCourse(courseId, taskTab(taskId), taskId)}
       />
     );
 
@@ -1776,6 +1823,7 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
         activities={cActivities}
         assignments={cAssignments}
         semesterSchedules={semesterSchedules}
+        onOpenItem={(tab, itemId) => onNavigateToCourse(courseId, tab, itemId)}
       />
     );
 
@@ -1983,6 +2031,7 @@ export const BackOffice: React.FC<BackOfficeProps> = ({
         focusId={detailStudent.focusId}
         courseSubmissions={submissions.filter(s => s.course_id === detailStudent.courseId)}
         onSaveGrade={onSaveGrade}
+        onOpenTask={(taskId) => onNavigateToCourse(detailStudent.courseId, taskTab(taskId), taskId)}
         onClose={() => setDetailStudent(null)}
       />
     )}

@@ -5,6 +5,21 @@ import {
 } from 'lucide-react';
 import { Course, Material, MaterialType, ActiveLearning, Assignment, SemesterSchedule, AL_TYPES } from '../types';
 
+export type OpenItem = (tab: 'materials' | 'assignments' | 'active_learning', itemId: string) => void;
+
+/** Title that links to the item's details when a handler is given. */
+const ItemTitle: React.FC<{ onOpen?: () => void; className: string; children: React.ReactNode }> = ({ onOpen, className, children }) =>
+  onOpen ? (
+    <button
+      type="button"
+      onClick={onOpen}
+      title="คลิกเพื่อดูรายละเอียด"
+      className={`${className} text-left hover:text-indigo-700 hover:underline underline-offset-2 cursor-pointer`}
+    >
+      {children}
+    </button>
+  ) : <span className={className}>{children}</span>;
+
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 
 const TH_MONTHS = [
@@ -46,10 +61,11 @@ interface WeekRowProps {
   assignments: Assignment[];
   isCurrentWeek: boolean;
   isPast: boolean;
+  onOpenItem?: OpenItem;
 }
 
 const WeekRow: React.FC<WeekRowProps> = ({
-  weekNum, dateLabel, materials, activities, assignments, isCurrentWeek, isPast,
+  weekNum, dateLabel, materials, activities, assignments, isCurrentWeek, isPast, onOpenItem,
 }) => {
   const hasContent = materials.length > 0 || activities.length > 0 || assignments.length > 0;
 
@@ -97,7 +113,7 @@ const WeekRow: React.FC<WeekRowProps> = ({
               <div key={mat.material_id} className="flex items-start gap-1.5 min-w-0">
                 <MatIcon type={mat.type} />
                 <div className="min-w-0">
-                  <span className="text-[11px] text-slate-700 font-medium leading-snug line-clamp-2">{mat.title}</span>
+                  <ItemTitle onOpen={onOpenItem && (() => onOpenItem('materials', mat.material_id))} className="text-[11px] text-slate-700 font-medium leading-snug line-clamp-2">{mat.title}</ItemTitle>
                   {mat.description && (
                     <p className="text-[10px] text-slate-400 leading-snug mt-0.5 line-clamp-1">{mat.description}</p>
                   )}
@@ -121,7 +137,7 @@ const WeekRow: React.FC<WeekRowProps> = ({
                   <Zap size={11} className="shrink-0 text-green-500 mt-0.5" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-[11px] text-slate-700 font-medium leading-snug">{act.title}</span>
+                      <ItemTitle onOpen={onOpenItem && (() => onOpenItem('active_learning', act.activity_id))} className="text-[11px] text-slate-700 font-medium leading-snug">{act.title}</ItemTitle>
                       {alType && (
                         <span className="text-[9px] font-semibold text-green-700 bg-green-100 px-1.5 py-0.5 rounded-md">
                           {alType.name}
@@ -155,7 +171,7 @@ const WeekRow: React.FC<WeekRowProps> = ({
               <div key={asgn.assignment_id} className="flex items-start gap-1.5 min-w-0">
                 <ClipboardList size={11} className="shrink-0 text-pink-500 mt-0.5" />
                 <div className="min-w-0 flex-1">
-                  <span className="text-[11px] text-slate-700 font-medium leading-snug line-clamp-2">{asgn.title}</span>
+                  <ItemTitle onOpen={onOpenItem && (() => onOpenItem('assignments', asgn.assignment_id))} className="text-[11px] text-slate-700 font-medium leading-snug line-clamp-2">{asgn.title}</ItemTitle>
                   {asgn.due_date && (
                     <div className="flex items-center gap-1 mt-0.5">
                       <Clock size={9} className="text-slate-400" />
@@ -187,10 +203,11 @@ interface TeachingPlanTabProps {
   activities: ActiveLearning[];
   assignments: Assignment[];
   semesterSchedules: SemesterSchedule[];
+  onOpenItem?: OpenItem;   // makes titles link to their details
 }
 
 export const TeachingPlanTab: React.FC<TeachingPlanTabProps> = ({
-  course, materials, activities, assignments, semesterSchedules,
+  course, materials, activities, assignments, semesterSchedules, onOpenItem,
 }) => {
   const schedule = semesterSchedules.find(
     s => Number(s.semester_id) === Number(course.semester_id) && Number(s.year) === Number(course.year)
@@ -309,6 +326,7 @@ export const TeachingPlanTab: React.FC<TeachingPlanTabProps> = ({
               assignments={asnByWeek[w] || []}
               isCurrentWeek={currentWeek === w}
               isPast={end < today}
+              onOpenItem={onOpenItem}
             />
           );
         })}

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   ClipboardCheck, ClipboardList, Zap, FileDown, Link as LinkIcon, AlignLeft,
   Save, CheckCircle, Clock, AlertCircle, Download, MessageSquare, Award, History, ChevronDown,
-  ChevronLeft, ChevronRight, Search,
+  ChevronLeft, ChevronRight, Search, ExternalLink,
 } from 'lucide-react';
 import {
   Course, Assignment, ActiveLearning, AssignmentSubmission, StudentProfile, StudentCourseVisit,
@@ -454,7 +454,8 @@ export const GradingSection: React.FC<{
   students: StudentProfile[];
   visits: StudentCourseVisit[];
   onSaveGrade: SaveGrade;
-}> = ({ course, assignments, activities, submissions, students, visits, onSaveGrade }) => {
+  onOpenTask?: (taskId: string) => void;   // open the task's details in the course page
+}> = ({ course, assignments, activities, submissions, students, visits, onSaveGrade, onOpenTask }) => {
   // Tasks by week, then in the order the teacher assigned them; numbered 1..n.
   const tasks: Task[] = useMemo(() => [
     ...assignments.map(a => ({
@@ -901,7 +902,19 @@ export const GradingSection: React.FC<{
               {task.week !== null && <span className="text-[10px] font-semibold text-slate-500">สัปดาห์ที่ {task.week}</span>}
               {task.createdAt && <span className="text-[10px] text-slate-400">สั่งงานเมื่อ {fmtTime(task.createdAt)}</span>}
             </div>
-            <h3 className="text-sm font-black text-slate-900">{task.title}</h3>
+            <h3 className="text-sm font-black text-slate-900">
+              {task.title}
+              {onOpenTask && (
+                <button
+                  type="button"
+                  onClick={() => onOpenTask(task.id)}
+                  title="เปิดรายละเอียดงานในหน้าวิชา"
+                  className="ml-2 inline-flex items-center gap-1 align-middle text-[10px] font-bold text-indigo-600 hover:text-indigo-800 hover:underline underline-offset-2"
+                >
+                  <ExternalLink size={10} /> ดูรายละเอียดงาน
+                </button>
+              )}
+            </h3>
             <p className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-3 flex-wrap">
               {task.dueDate && <span className="flex items-center gap-1"><Clock size={10} /> กำหนดส่ง {task.dueDate}</span>}
               <span>ส่งแล้ว {counts.all - counts.missing}/{counts.all} คน</span>

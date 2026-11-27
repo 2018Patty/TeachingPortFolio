@@ -102,6 +102,33 @@ export default function App() {
   // 3. Navigation state
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
   const [courseDetailTab, setCourseDetailTab] = useState<'info' | 'materials' | 'assignments' | 'qa' | 'active_learning' | 'reflection' | 'plan'>('info');
+  // Item (material / assignment / activity id) to scroll to and highlight after opening a course tab.
+  const [focusItemId, setFocusItemId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!focusItemId) return;
+    let tries = 0;
+    let timer: number | undefined;
+    const find = () => {
+      const el = document.getElementById(`item-${focusItemId}`);
+      if (el) {
+        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        el.classList.add('ring-4', 'ring-indigo-300', 'ring-offset-2');
+        timer = window.setTimeout(() => el.classList.remove('ring-4', 'ring-indigo-300', 'ring-offset-2'), 2500);
+        setFocusItemId(null);
+      } else if (++tries < 40) {
+        timer = window.setTimeout(find, 100);   // wait for the tab / data to render
+      } else {
+        setFocusItemId(null);
+      }
+    };
+    timer = window.setTimeout(find, 50);
+    return () => window.clearTimeout(timer);
+  }, [focusItemId, courseDetailTab, selectedCourseId, currentPage]);
+  /** Open a tab of the current course and jump to one item in it. */
+  const openCourseItem = (tab: 'materials' | 'assignments' | 'active_learning', itemId: string) => {
+    setCourseDetailTab(tab);
+    setFocusItemId(itemId);
+  };
 
   // 4. Modals and Forms states
   const [showLoginModal, setShowLoginModal] = useState(false);
@@ -1330,10 +1357,11 @@ export default function App() {
   };
 
   // Navigate to course in main view with specific tab
-  const handleBackOfficeNavigateToCourse = (courseId: string, tab: string) => {
+  const handleBackOfficeNavigateToCourse = (courseId: string, tab: string, itemId?: string) => {
     setSelectedCourseId(courseId);
     setCourseDetailTab(tab as 'info' | 'materials' | 'assignments' | 'qa' | 'active_learning' | 'reflection');
     setCurrentPage('courses');
+    setFocusItemId(itemId ?? null);
   };
 
   const handleAddCourseClick = () => {
@@ -1736,7 +1764,10 @@ export default function App() {
             visits={visits}
             allStudents={allStudents}
             onNavigateCourses={() => setCurrentPage('courses')}
-            onSelectCourse={(id) => { setSelectedCourseId(id); setCurrentPage('courses'); }}
+            onSelectCourse={(id, section, itemId) => {
+              setSelectedCourseId(id); setCurrentPage('courses');
+              if (itemId && (section === 'materials' || section === 'assignments' || section === 'active_learning')) openCourseItem(section, itemId);
+            }}
           />
         ) : currentPage === 'profile' ? (
           <ProfilePage
@@ -2178,7 +2209,8 @@ export default function App() {
                                   </div>
                                 )}
                                 <div
-                                  className="group border border-slate-200 hover:border-slate-300 rounded-2xl p-4 flex items-center justify-between gap-4 transition duration-150 bg-slate-50/40 hover:bg-slate-50"
+                                  id={`item-${mat.material_id}`}
+                                  className="scroll-mt-24 group border border-slate-200 hover:border-slate-300 rounded-2xl p-4 flex items-center justify-between gap-4 transition duration-150 bg-slate-50/40 hover:bg-slate-50"
                                 >
                                   <div className="flex items-start gap-3">
                                     <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center shrink-0 border border-slate-100 shadow-sm">
@@ -2571,7 +2603,8 @@ export default function App() {
                             return (
                               <div
                                 key={assign.assignment_id}
-                                className="border border-slate-200 rounded-2xl p-4 sm:p-5 flex flex-col justify-between gap-4 bg-white hover:border-slate-300 transition duration-150 shadow-sm"
+                                id={`item-${assign.assignment_id}`}
+                                className="scroll-mt-24 border border-slate-200 rounded-2xl p-4 sm:p-5 flex flex-col justify-between gap-4 bg-white hover:border-slate-300 transition duration-150 shadow-sm"
                               >
                                 <div className="space-y-2.5">
                                   <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
@@ -2679,7 +2712,7 @@ export default function App() {
                               : [];
                             const actAsAssignment: Assignment = { assignment_id: act.activity_id, course_id: act.course_id, title: act.title, description: act.description, due_date: act.due_date || '', status: 'open' };
                             return (
-                              <div key={act.activity_id} className="border border-green-200 rounded-2xl p-4 sm:p-5 flex flex-col gap-4 bg-green-50/30 hover:border-green-300 transition shadow-sm">
+                              <div key={act.activity_id} id={`item-${act.activity_id}`} className="scroll-mt-24 border border-green-200 rounded-2xl p-4 sm:p-5 flex flex-col gap-4 bg-green-50/30 hover:border-green-300 transition shadow-sm">
                                 <div className="space-y-2.5">
                                   <div className="flex flex-wrap items-center justify-between gap-2 border-b border-green-100 pb-2.5">
                                     <div className="flex items-center gap-2 flex-wrap">
@@ -2802,7 +2835,7 @@ export default function App() {
                       {activeCourseActivities.length > 0 ? (
                         <div className="space-y-4">
                           {activeCourseActivities.map((act: ActiveLearning) => (
-                            <div key={act.activity_id} className="border border-slate-200 rounded-2xl p-4 space-y-2 hover:border-green-200 transition-colors">
+                            <div key={act.activity_id} id={`item-${act.activity_id}`} className="scroll-mt-24 border border-slate-200 rounded-2xl p-4 space-y-2 hover:border-green-200 transition-colors">
                               <div className="flex items-start justify-between gap-2">
                                 <div className="flex items-center gap-2 min-w-0">
                                   <div className="w-7 h-7 rounded-lg bg-green-100 flex items-center justify-center shrink-0">
@@ -2871,6 +2904,7 @@ export default function App() {
                       activities={activeCourseActivities}
                       assignments={activeCourseAssignments}
                       semesterSchedules={semesterSchedules}
+                      onOpenItem={openCourseItem}
                     />
                   )}
 

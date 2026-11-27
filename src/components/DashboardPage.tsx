@@ -22,7 +22,7 @@ interface DashboardProps {
   visits: StudentCourseVisit[];
   allStudents: StudentProfile[];
   onNavigateCourses: () => void;
-  onSelectCourse: (courseId: string, section?: string) => void;
+  onSelectCourse: (courseId: string, section?: string, itemId?: string) => void;
 }
 
 const MetricCard = ({ icon, label, value, sub, color, onClick }: {
@@ -922,7 +922,7 @@ export const DashboardPage: React.FC<DashboardProps> = ({
                         const sColor = { open: 'text-emerald-700 bg-emerald-50', upcoming: 'text-indigo-700 bg-indigo-50', closed: 'text-red-600 bg-red-50' }[a.status] || '';
                         const sLabel = { open: 'เปิดรับ', upcoming: 'เร็วๆนี้', closed: 'ปิดแล้ว' }[a.status] || a.status;
                         return (
-                          <tr key={a.assignment_id} className={`border-b border-slate-50 cursor-pointer hover:bg-pink-50/40 ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'}`} onClick={() => { close(); onSelectCourse(a.course_id, 'assignments'); }}>
+                          <tr key={a.assignment_id} className={`border-b border-slate-50 cursor-pointer hover:bg-pink-50/40 ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'}`} onClick={() => { close(); onSelectCourse(a.course_id, 'assignments', a.assignment_id); }}>
                             <td className="px-4 py-2.5 font-semibold text-slate-800 leading-snug">{a.title}</td>
                             <td className="px-3 py-2.5 text-indigo-600 font-bold text-[10px]">{course?.course_code}</td>
                             <td className="px-3 py-2.5 text-center text-slate-500 text-[10px]">{a.due_date}</td>
@@ -964,7 +964,7 @@ export const DashboardPage: React.FC<DashboardProps> = ({
                         const course = courses.find(c => c.course_id === m.course_id);
                         const tColor: Record<string, string> = { slides: 'text-amber-700 bg-amber-50', video: 'text-rose-700 bg-rose-50', document: 'text-blue-700 bg-blue-50', link: 'text-indigo-700 bg-indigo-50' };
                         return (
-                          <tr key={m.material_id} className={`border-b border-slate-50 cursor-pointer hover:bg-amber-50/40 ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'}`} onClick={() => { close(); onSelectCourse(m.course_id, 'materials'); }}>
+                          <tr key={m.material_id} className={`border-b border-slate-50 cursor-pointer hover:bg-amber-50/40 ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'}`} onClick={() => { close(); onSelectCourse(m.course_id, 'materials', m.material_id); }}>
                             <td className="px-4 py-2.5"><div className="font-semibold text-slate-800 leading-snug">{m.title}</div>{m.description && <div className="text-[10px] text-slate-400 mt-0.5 truncate max-w-[200px]">{m.description}</div>}</td>
                             <td className="px-3 py-2.5 text-indigo-600 font-bold text-[10px]">{course?.course_code}</td>
                             <td className="px-3 py-2.5 text-center"><span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg ${tColor[m.type] || ''}`}>{m.type}</span></td>
@@ -1032,7 +1032,7 @@ export const DashboardPage: React.FC<DashboardProps> = ({
                               <tr key={act.activity_id} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/60'}>
                                 <td className="px-3 py-2.5">
                                   <button
-                                    onClick={() => { setShowAlList(false); onSelectCourse(act.course_id, 'active_learning'); }}
+                                    onClick={() => { setShowAlList(false); onSelectCourse(act.course_id, 'active_learning', act.activity_id); }}
                                     className="text-left font-semibold text-indigo-600 hover:text-indigo-800 hover:underline"
                                   >
                                     {act.title}
@@ -1077,7 +1077,7 @@ export const DashboardPage: React.FC<DashboardProps> = ({
                             <tr key={act.activity_id} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/60'}>
                               <td className="px-3 py-2.5">
                                 <button
-                                  onClick={() => { setShowAlList(false); onSelectCourse(act.course_id, 'active_learning'); }}
+                                  onClick={() => { setShowAlList(false); onSelectCourse(act.course_id, 'active_learning', act.activity_id); }}
                                   className="text-left font-semibold text-indigo-600 hover:text-indigo-800 hover:underline"
                                 >
                                   {act.title}
@@ -1129,7 +1129,7 @@ export const DashboardPage: React.FC<DashboardProps> = ({
                         <div key={a.activity_id} className={`flex items-start justify-between gap-3 px-3 py-2.5 text-xs ${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/60'}`}>
                           <div className="min-w-0 flex-1">
                             <button
-                              onClick={() => { setDetailType(null); onSelectCourse(a.course_id, 'active_learning'); }}
+                              onClick={() => { setDetailType(null); onSelectCourse(a.course_id, 'active_learning', a.activity_id); }}
                               className="text-left font-semibold text-indigo-600 hover:text-indigo-800 hover:underline leading-snug"
                             >
                               {a.title}
