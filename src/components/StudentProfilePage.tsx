@@ -654,7 +654,7 @@ export const StudentProfilePage: React.FC<Props> = ({
                                 <div>
                                   <p className="text-xs font-bold text-slate-800 leading-snug">{assign.title}</p>
                                   {assign.description && (
-                                    <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed line-clamp-2">
+                                    <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed line-clamp-2 whitespace-pre-line">
                                       {assign.description}
                                     </p>
                                   )}

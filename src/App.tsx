@@ -2626,7 +2626,7 @@ export default function App() {
                                     <h4 className="text-xs font-extrabold text-slate-900 tracking-tight leading-tight">
                                       {assign.title}
                                     </h4>
-                                    <p className="text-[11px] text-slate-600 leading-relaxed font-normal">
+                                    <p className="text-[11px] text-slate-600 leading-relaxed font-normal whitespace-pre-line">
                                       {assign.description}
                                     </p>
                                   </div>
@@ -3664,11 +3664,11 @@ export default function App() {
                 <textarea
                   id="assign-desc"
                   required
-                  rows={3}
+                  rows={6}
                   value={assignmentForm.description}
                   onChange={(e) => setAssignmentForm({ ...assignmentForm, description: e.target.value })}
-                  placeholder="ระบุข้อกำหนด วิธีส่ง เกณฑ์ และวิธีการเก็บข้อมูล..."
-                  className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl p-3 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  placeholder="ระบุข้อกำหนด วิธีส่ง เกณฑ์ และวิธีการเก็บข้อมูล... (กด Enter เพื่อขึ้นบรรทัดใหม่)"
+                  className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl p-3 leading-relaxed resize-y focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                 />
               </div>
 
