@@ -2749,7 +2749,7 @@ export default function App() {
                                   </div>
                                   <div className="space-y-1.5">
                                     <h4 className="text-xs font-extrabold text-slate-900 tracking-tight">{act.title}</h4>
-                                    <p className="text-[11px] text-slate-600 leading-relaxed">{act.description}</p>
+                                    <p className="text-[11px] text-slate-600 leading-relaxed whitespace-pre-line">{act.description}</p>
                                   </div>
                                   {act.duration && (
                                     <div className="flex items-center gap-1 text-[10px] text-slate-500">
@@ -2863,7 +2863,7 @@ export default function App() {
                                   )}
                                 </div>
                               </div>
-                              {act.description && <p className="text-xs text-slate-600 leading-relaxed pl-9">{act.description}</p>}
+                              {act.description && <p className="text-xs text-slate-600 leading-relaxed pl-9 whitespace-pre-line">{act.description}</p>}
                               {splitActivityFileUrl(act.file_url).videos.length > 0 && (
                                 <div className="pl-9"><ActivityVideos raw={act.file_url} /></div>
                               )}
@@ -3852,11 +3852,11 @@ export default function App() {
               <div className="space-y-1">
                 <label className="block text-xs font-semibold text-slate-700">รายละเอียด / วิธีดำเนินกิจกรรม</label>
                 <textarea
-                  rows={3}
+                  rows={6}
                   value={activityForm.description}
                   onChange={e => setActivityForm(f => ({ ...f, description: e.target.value }))}
-                  placeholder="อธิบายวิธีดำเนินกิจกรรม ขั้นตอน และเป้าหมายการเรียนรู้..."
-                  className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl p-3 focus:ring-2 focus:ring-green-500 focus:outline-none leading-relaxed"
+                  placeholder="อธิบายวิธีดำเนินกิจกรรม ขั้นตอน และเป้าหมายการเรียนรู้... (กด Enter เพื่อขึ้นบรรทัดใหม่)"
+                  className="w-full text-xs text-slate-900 border border-slate-200 rounded-xl p-3 resize-y focus:ring-2 focus:ring-green-500 focus:outline-none leading-relaxed"
                 />
               </div>
 
